@@ -1,0 +1,27 @@
+{
+  "1": {
+    "class_type": "ComfyTV.VideoStage",
+    "inputs": {
+      "force_run_token": 173145653,
+      "project_id": "default",
+      "parent_output_id": 0,
+      "workflow": "01_MiniMax H3 文生视频",
+      "resolution": "0.5 (≈707×707)",
+      "aspect_ratio": "9:16",
+      "duration_s": 5,
+      "generate_audio": true,
+      "main_prompt": "placeholder",
+      "custom_params": "{}"
+    }
+  },
+  "2": {
+    "class_type": "ComfyTV.VideoPickerStage",
+    "inputs": {
+      "project_id": "default",
+      "parent_output_id": 0,
+      "selected_index": 1,
+      "pool": "",
+      "batch": ["1", 0]
+    }
+  }
+}

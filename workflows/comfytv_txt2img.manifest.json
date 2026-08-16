@@ -1,0 +1,28 @@
+{
+  "id": "comfytv_txt2img",
+  "name": "ComfyTV 文生图 (T2I)",
+  "media": "image",
+  "description": "你的 ComfyTV.ImageStage(T2I) + ImagePickerStage 工作流，批量 3 张",
+  "workflow_file": "comfytv_txt2img.json",
+  "prompt_slots": [
+    {"node": "1", "field": "main_prompt"}
+  ],
+  "aspect_ratio_slots": [
+    {"node": "1", "field": "aspect_ratio"}
+  ],
+  "resolution_slots": [
+    {"node": "1", "field": "resolution"}
+  ],
+  "resolution_map": {
+    "720p": "0.5 (≈707×707)",
+    "1080p": "1.0 (≈1024×1024)",
+    "2k": "1.5 (≈1225×1225)",
+    "4k": "2.0 (≈1414×1414)"
+  },
+  "seed_slots": [],
+  "batch_size_slots": [
+    {"node": "1", "field": "batch_size"}
+  ],
+  "filename_slots": [],
+  "collect": {"mode": "history"}
+}

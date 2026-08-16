@@ -1,0 +1,69 @@
+diff --git a/runners/_workflow_mutate.py b/runners/_workflow_mutate.py
+index 5b7f7e2..b67782e 100644
+--- a/runners/_workflow_mutate.py
++++ b/runners/_workflow_mutate.py
+@@ -1,4 +1,5 @@
+ import logging
++import re
+ 
+ from .base import RunnerContext
+ from ._workflow_resolve import (
+@@ -12,6 +13,46 @@ from ._workflow_resolve import (
+ _log = logging.getLogger(__name__)
+ 
+ 
++def _aspect_ratio_for_resolution_selector(value):
++    """ComfyUI 0.31+ 的 ResolutionSelector 节点要求带显示名的枚举键
++    （如 "9:16 (Portrait Widescreen)"），而 ComfyTV 舞台传入裸比值（如 "9:16"）。
++    这里按已安装 ComfyUI 的真实键表做翻译，找不到匹配时原样返回。
++
++    注意：ASPECT_RATIOS 的键是 AspectRatio(str, Enum) 成员，str(key) 返回的是
++    成员名（如 "AspectRatio.WIDESCREEN_V"）而非值，必须用 .value 取字符串值。
++    """
++    if not isinstance(value, str) or not value:
++        return value
++    v = value.strip()
++    try:
++        from comfy_extras.nodes_resolution import ASPECT_RATIOS
++    except Exception:
++        return value
++    if v in ASPECT_RATIOS:
++        return v
++    for key in ASPECT_RATIOS:
++        s = getattr(key, "value", key)
++        if isinstance(s, str) and s.startswith(v + " "):
++            return s
++    return value
++
++
++_MP_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)")
++
++
++def _megapixels_for_resolution_selector(value):
++    """ResolutionSelector 的 megapixels 输入是浮点数，而 ComfyTV 舞台的
++    resolution 档位是 "0.5 (≈707×707)" 这类字符串。这里提取开头的数值部分
++    （0.5 -> 0.5），解析失败时原样返回。
++    """
++    if isinstance(value, (int, float)):
++        return float(value)
++    m = _MP_RE.match(str(value or ""))
++    if m:
++        return float(m.group(1))
++    return value
++
++
+ def _split_runner_id(runner_id: str) -> tuple[str, str]:
+     if "/" not in runner_id:
+         raise RuntimeError(
+@@ -247,6 +288,11 @@ def _apply_overrides(workflow: dict, config: dict, resolver: _Resolver,
+             value = resolver.resolve(where, spec)
+             if value is KEEP_ORIGINAL:
+                 continue
++            if node.get("class_type") == "ResolutionSelector":
++                if input_name == "aspect_ratio":
++                    value = _aspect_ratio_for_resolution_selector(value)
++                elif input_name == "megapixels":
++                    value = _megapixels_for_resolution_selector(value)
+             node_inputs[input_name] = value
+ 
+     if orphaned:

@@ -1,0 +1,29 @@
+# ===== 密钥与本地配置（严禁入库）=====
+# config.json 含 DeepSeek API Key 与桥 API Key，绝不提交。
+# 部署请用环境变量 COMFYBRIDGE_API_KEY / COMFYBRIDGE_COMFYUI_URL，或本地重建 config.json。
+config.json
+
+# ===== 运行时数据 =====
+storage/
+startlog.txt
+.pip-tmp/
+
+# ===== 受限环境依赖（pip 可用则不需要）=====
+.vendor/
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== 调研/临时文件 =====
+comfytv_src/
+h3_research/
+
+# ===== 测试脚本（内含明文 API Key）=====
+_*.py
+!_vendor_install.py
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db

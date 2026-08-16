@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+storage/
+startlog.txt
+.vendor/
+comfytv_src/
+h3_research/
+comfytv_aspect_fix.patch
+*.bat
+_*.py
+.pip-tmp/
+.DS_Store
+.git/

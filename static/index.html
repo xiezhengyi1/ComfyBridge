@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ComfyBridge · 文生图工作台</title>
+<style>
+:root{
+  --bg:#f2f4f8; --card:#ffffff; --border:#dde3ec; --text:#1f2937; --muted:#6b7280;
+  --accent:#2563eb; --accent-hover:#1d4ed8;
+  --ok:#16a34a; --err:#dc2626; --warn:#d97706; --info:#0891b2;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--text);font-size:14px}
+header{display:flex;align-items:center;gap:14px;padding:10px 20px;background:var(--card);
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+.logo{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+.logo .dot{width:10px;height:10px;border-radius:50%;background:#cbd5e1;display:inline-block}
+.logo .dot.on{background:var(--ok)} .logo .dot.off{background:var(--err)}
+header .spacer{flex:1}
+header label{color:var(--muted);font-size:13px}
+#apikey{width:300px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px}
+main{max-width:1280px;margin:0 auto;padding:16px 20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;
+  box-shadow:0 1px 3px rgba(16,24,40,.06)}
+/* ---------- 生成控制区 ---------- */
+.composer textarea{width:100%;height:96px;margin-top:10px;padding:12px;border:1px solid var(--border);
+  border-radius:10px;font-size:14px;font-family:inherit;resize:vertical;line-height:1.6}
+.composer textarea:focus{outline:2px solid #bfdbfe;border-color:var(--accent)}
+.ctl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px}
+.ctl-row .field{display:flex;flex-direction:column;gap:4px}
+.ctl-row .field span{font-size:12px;color:var(--muted)}
+select,input[type=text]{padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;
+  background:#fff;color:var(--text)}
+#seed{width:130px}
+.btn{padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;
+  background:var(--accent);color:#fff;transition:background .15s}
+.btn:hover{background:var(--accent-hover)}
+.btn:disabled{background:#93c5fd;cursor:not-allowed}
+.btn.ghost{background:#fff;color:var(--text);border:1px solid var(--border)}
+.btn.ghost:hover{background:#f3f4f6}
+/* ---------- 工作区布局 ---------- */
+.workspace{display:flex;gap:16px;margin-top:16px;align-items:flex-start}
+.history{width:300px;flex-shrink:0;max-height:calc(100vh - 320px);overflow-y:auto;position:sticky;top:70px}
+.history h3,.stage h3{margin:0 0 12px;font-size:15px}
+.jobitem{padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;
+  transition:border-color .15s, background .15s}
+.jobitem:hover{border-color:#bfdbfe}
+.jobitem.active{border-color:var(--accent);background:#eff6ff}
+.jobitem .line1{display:flex;align-items:center;gap:6px}
+.jobitem .id{font-family:Consolas,monospace;font-size:12px;color:var(--muted)}
+.jobitem .badge{margin-left:auto}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.b-queued{background:#f1f5f9;color:#475569}
+.b-running{background:#dbeafe;color:#1d4ed8}
+.b-completed{background:#dcfce7;color:#15803d}
+.b-failed{background:#fee2e2;color:#b91c1c}
+.b-timed_out{background:#fef3c7;color:#b45309}
+.b-interrupted{background:#f1f5f9;color:#64748b}
+.jobitem .p{font-size:12px;color:var(--muted);margin-top:5px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.jobitem .t{font-size:11px;color:#9ca3af;margin-top:3px}
+/* ---------- 任务面板 ---------- */
+.stage{flex:1;min-height:420px}
+#stagehead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+#stagehead .jobid{font-family:Consolas,monospace;font-size:13px;color:var(--muted)}
+#stagehead .meta{font-size:12px;color:var(--muted)}
+/* 流程步骤条 */
+.pipeline{display:flex;align-items:flex-start;margin:6px 0 18px}
+.step{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;min-width:70px}
+.step .circle{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--border);background:#fff;color:#9ca3af;font-weight:700;font-size:13px;z-index:1}
+.step .name{font-size:12px;color:#9ca3af;margin-top:6px}
+.step .sub{font-size:11px;color:#c0c7d1;margin-top:2px;text-align:center;max-width:110px}
+.step.active .circle{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 4px #dbeafe}
+.step.active .name{color:var(--accent);font-weight:600}
+.step.done .circle{border-color:var(--ok);background:var(--ok);color:#fff}
+.step.done .name{color:var(--ok)}
+.step.fail .circle{border-color:var(--err);background:var(--err);color:#fff}
+.step.fail .name{color:var(--err)}
+.step .line{position:absolute;top:15px;left:calc(50% + 18px);width:calc(100% - 36px);height:2px;background:var(--border)}
+.step:last-child .line{display:none}
+.step.done .line,.step.active .line{background:#bfdbfe}
+/* 实时预览 */
+.live{margin:12px 0;display:flex;justify-content:center;background:#f8fafc;border:1px dashed var(--border);
+  border-radius:12px;min-height:180px;align-items:center;position:relative;overflow:hidden}
+.live img{max-height:60vh;max-width:100%;display:block}
+.live .ph{color:#9ca3af;font-size:13px;padding:30px;text-align:center;line-height:1.8}
+.live .tag{position:absolute;top:10px;left:10px;background:rgba(37,99,235,.92);color:#fff;font-size:12px;
+  padding:3px 10px;border-radius:999px}
+/* 进程可视化面板 */
+.viz{margin:12px 0;background:linear-gradient(180deg,#f5f9ff,#eef4fe);border:1px solid #bfdbfe;
+  border-radius:12px;padding:22px;text-align:center}
+.viz .viz-pct{font-size:46px;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums;line-height:1.1}
+.viz .viz-bar{height:10px;border-radius:999px;background:#dbeafe;margin:14px auto 0;max-width:460px;overflow:hidden}
+.viz .viz-fill{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,#60a5fa,#2563eb);
+  transition:width .6s ease}
+.viz .viz-meta{margin-top:12px;font-size:12px;color:var(--muted)}
+.viz .pulse{animation:pulse 1.6s ease-in-out infinite;display:inline-block}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+/* 画廊 */
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px}
+.fcard{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff}
+.fcard img,.fcard video{width:100%;display:block;background:#f1f5f9}
+.fcard .fmeta{padding:8px 10px;font-size:12px;color:var(--muted)}
+.fcard .fname{font-family:Consolas,monospace;word-break:break-all}
+.fcard .frow{display:flex;align-items:center;gap:8px;margin-top:5px}
+.picked-tag{background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+.fcard a{color:var(--accent);text-decoration:none;font-size:12px}
+.fcard a:hover{text-decoration:underline}
+/* 错误与提示 */
+.errbox{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:10px;padding:12px;
+  font-size:13px;margin-top:12px;white-space:pre-wrap;word-break:break-all}
+.infobox{background:#ecfeff;border:1px solid #a5f3fc;color:#155e75;border-radius:10px;padding:12px;
+  font-size:13px;margin-top:12px}
+.drybox{background:#f8fafc;border:1px solid var(--border);border-radius:10px;margin-top:12px;overflow:auto;
+  max-height:50vh}
+.drybox pre{margin:0;padding:12px;font-size:12px}
+.empty{margin-top:12px;color:#9ca3af;text-align:center;padding:60px 20px;font-size:14px;line-height:1.9}
+footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
+/* 拦截弹窗 */
+.modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;
+  justify-content:center;z-index:100;animation:fadein .15s ease}
+.modal{background:#fff;border-radius:14px;padding:28px 32px;width:min(420px,90vw);text-align:center;
+  box-shadow:0 20px 50px rgba(15,23,42,.25);animation:pop .2s ease}
+.modal .icon{width:56px;height:56px;border-radius:50%;background:#fef3c7;color:#d97706;
+  font-size:28px;display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
+.modal h3{margin:0 0 10px;font-size:18px;color:#1f2937}
+.modal p{margin:0 0 20px;font-size:14px;color:#6b7280;line-height:1.8}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes pop{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🎬 ComfyBridge <span class="dot" id="wsdot" title="实时连接状态"></span></div>
+  <span id="wsstatus" style="font-size:12px;color:#9ca3af">未连接</span>
+  <span id="srvver" style="font-size:11px;color:#9ca3af"></span>
+  <div class="spacer"></div>
+  <label>API Key</label>
+  <input id="apikey" placeholder="粘贴 API Key（自动保存）" autocomplete="off">
+</header>
+
+<main>
+  <!-- 生成控制区 -->
+  <section class="composer card">
+    <div class="ctl-row" style="margin-top:0">
+      <div class="field" style="flex:1;min-width:280px"><span>🎯 工作流（决定模板 / 风格 / 批次或秒数）</span><select id="wf"></select></div>
+    </div>
+    <div class="ctl-row">
+      <div class="field"><span>宽高比</span>
+        <select id="ar">
+          <option>1:1</option><option>4:3</option><option>3:4</option><option>16:9</option>
+          <option selected>9:16</option><option>21:9</option><option>3:2</option><option>2:3</option>
+        </select>
+      </div>
+      <div class="field"><span>分辨率</span>
+        <select id="res"><option>720p</option><option selected>1080p</option><option>2k</option><option>4k</option></select>
+      </div>
+      <div class="field">
+        <span id="countlabel">批量张数</span>
+        <select id="bs">
+          <option value="">默认(3)</option>
+          <option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option>
+          <option value="4">4 张</option><option value="5">5 张</option><option value="6">6 张</option>
+          <option value="7">7 张</option><option value="8">8 张</option>
+        </select>
+        <select id="dur" style="display:none" title="生成视频的时长（秒）">
+          <option value="1">1 秒</option><option value="2">2 秒</option><option value="3">3 秒</option>
+          <option value="4">4 秒</option><option value="5" selected>5 秒</option><option value="6">6 秒</option>
+          <option value="7">7 秒</option><option value="8">8 秒</option><option value="9">9 秒</option>
+          <option value="10">10 秒</option><option value="11">11 秒</option><option value="12">12 秒</option>
+          <option value="13">13 秒</option><option value="14">14 秒</option><option value="15">15 秒</option>
+        </select>
+      </div>
+      <div class="field"><span>种子（留空随机）</span><input id="seed" type="text" placeholder="随机"></div>
+      <button class="btn" id="go">▶ 生成</button>
+      <button class="btn ghost" id="dry">预览注入 (dry-run)</button>
+    </div>
+    <textarea id="prompt" placeholder="输入提示词，例如：年轻女孩在雨夜城市街道上撑着透明雨伞回头微笑，电影感，霓虹灯光，胶片质感"></textarea>
+    <div class="ctl-row">
+      <div class="field" style="flex:1;min-width:320px"><span>📌 结构模板（选中后替换【主体内容】空位）</span>
+        <select id="preset"><option value="">选择模板…</option></select>
+      </div>
+      <div class="field"><span>优化风格</span>
+        <select id="style"></select>
+      </div>
+      <button class="btn ghost" id="enh" title="把简单描述扩写成完整提示词">✨ 优化提示词</button>
+    </div>
+    <div id="enhancebox"></div>
+    <div id="composererr"></div>
+  </section>
+
+  <!-- 工作区 -->
+  <div class="workspace">
+    <aside class="history card">
+      <h3>📋 任务历史 <span id="jobcount" style="color:#9ca3af;font-weight:400"></span></h3>
+      <div id="joblist"><div class="empty" style="padding:20px">暂无任务</div></div>
+    </aside>
+
+    <section class="stage card">
+      <div id="stagehead">
+        <h3 style="margin:0">任务面板</h3>
+        <span class="jobid" id="stagejobid"></span>
+        <span class="meta" id="stagemeta"></span>
+      </div>
+
+      <!-- 流程步骤条 -->
+      <div class="pipeline" id="pipeline">
+        <div class="step" data-step="queued"><div class="line"></div><div class="circle">1</div><div class="name">排队中</div><div class="sub">安全审查与入队</div></div>
+        <div class="step" data-step="running"><div class="line"></div><div class="circle">2</div><div class="name">执行中</div><div class="sub" id="stepsub2">ComfyUI 采样</div></div>
+        <div class="step" data-step="collect"><div class="line"></div><div class="circle">3</div><div class="name">收集</div><div class="sub">下载生成文件</div></div>
+        <div class="step" data-step="done"><div class="circle">4</div><div class="name">完成</div><div class="sub" id="stepsub4">等待任务</div></div>
+      </div>
+
+      <div class="viz" id="viz" style="display:none">
+        <div class="viz-pct"><span id="vizpct">0%</span><span class="pulse" style="font-size:14px;color:#60a5fa"> ●</span></div>
+        <div class="viz-bar"><div class="viz-fill" id="vizfill"></div></div>
+        <div class="viz-meta" id="vizmeta">ComfyUI 云端采样中…</div>
+      </div>
+
+      <div class="live" id="live" style="display:none">
+        <span class="tag">LIVE 实时预览</span>
+        <img id="liveimg" alt="实时预览">
+      </div>
+
+      <div id="gallerywrap"></div>
+      <div id="stageerr"></div>
+      <div id="stagedry"></div>
+      <div class="empty" id="stageempty">← 在左侧选择任务，或在上方输入提示词点“生成”<br>生成过程中这里会实时显示采样进度与预览画面</div>
+    </section>
+  </div>
+</main>
+<footer>ComfyBridge · 本地中间 API · 生成文件保存在 storage/jobs/</footer>
+
+<!-- 拦截弹窗（只提示修改，不暴露内部细节） -->
+<div class="modal-mask" id="modal" style="display:none" onclick="if(event.target===this)closeBlockModal()">
+  <div class="modal">
+    <div class="icon">⚠️</div>
+    <h3>提示词需要修改</h3>
+    <p>你输入的提示词包含不适宜生成的内容，<br>已被安全系统拦截。</p>
+    <p style="font-size:13px;color:#9ca3af;margin-top:-10px">请调整描述后重新提交，谢谢配合。</p>
+    <button class="btn" onclick="closeBlockModal()">去修改</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let jobs = new Map();       // job_id -> job
+let activeId = null;        // 当前选中任务
+let ES = null;              // EventSource
+let fallbackTimer = null;
+let liveTs = 0;
+
+// ---------- 基础 ----------
+const key = () => ($('apikey').value || '').trim();
+$('apikey').value = localStorage.getItem('cbkey') || '';
+$('apikey').addEventListener('change', () => {
+  localStorage.setItem('cbkey', key());
+  connectSSE();
+  refreshWorkflows();   // 填 Key 后立即拉取工作流列表
+  refreshHealth();
+});
+$('apikey').addEventListener('input', () => localStorage.setItem('cbkey', key()));
+
+async function api(path, opts = {}) {
+  const k = key();
+  const h = { 'Content-Type': 'application/json' };
+  if (k) h['Authorization'] = 'Bearer ' + k;
+  const r = await fetch(path, { ...opts, headers: { ...h, ...(opts.headers || {}) } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error(typeof j.detail === 'object' ? JSON.stringify(j.detail) : (j.detail || 'HTTP ' + r.status));
+    err.status = r.status;
+    err.detail = j.detail;
+    throw err;
+  }
+  return j;
+}
+
+// 安全拦截判定（不向前端用户展示任何命中细节）
+function isBlockedError(e) {
+  return e && e.status === 422 && e.detail && typeof e.detail === 'object'
+    && ['hard', 'sensitive', 'llm'].includes(e.detail.category);
+}
+function openBlockModal() { $('modal').style.display = 'flex'; $('composererr').innerHTML = ''; }
+function closeBlockModal() { $('modal').style.display = 'none'; $('prompt').focus(); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeBlockModal(); });
+
+// ---------- SSE 实时连接 ----------
+function connectSSE() {
+  if (ES) ES.close();
+  setWS(false, '未连接');
+  const k = key();
+  if (!k) return;
+  try {
+    ES = new EventSource('/v1/events?key=' + encodeURIComponent(k));
+  } catch (e) { setWS(false, '不支持 SSE'); return; }
+  ES.onopen = () => { setWS(true, '实时已连接'); stopFallback(); };
+  ES.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'snapshot') {
+      jobs = new Map((m.jobs || []).map(j => [j.id, j]));
+      renderHistory();
+      if (!activeId || !jobs.has(activeId)) {
+        const act = (m.jobs || []).find(j => j.status === 'running' || j.status === 'queued') || (m.jobs || [])[0];
+        if (act) selectJob(act.id);
+        else renderStage();
+      }
+    } else if (m.type === 'job_update') {
+      jobs.set(m.job.id, m.job);
+      renderHistory();
+      if (m.job.id === activeId) renderStage();
+    }
+  };
+  ES.onerror = () => { setWS(false, '实时连接中断，轮询兜底中…'); startFallback(); };
+}
+function setWS(ok, text) {
+  const d = $('wsdot');
+  d.className = 'dot ' + (ok ? 'on' : 'off');
+  $('wsstatus').textContent = text;
+}
+function startFallback() {
+  if (fallbackTimer) return;
+  fallbackTimer = setInterval(async () => {
+    try {
+      const list = await api('/v1/jobs?limit=100');
+      jobs = new Map(list.map(j => [j.id, j]));
+      renderHistory();
+      if (activeId) renderStage();
+    } catch (e) { /* 静默重试 */ }
+  }, 2500);
+}
+function stopFallback() { if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; } }
+
+// ---------- 历史列表 ----------
+function renderHistory() {
+  const box = $('joblist');
+  const arr = [...jobs.values()].sort((a, b) => b.created_at - a.created_at);
+  $('jobcount').textContent = '（' + arr.length + '）';
+  if (!arr.length) { box.innerHTML = '<div class="empty" style="padding:20px">暂无任务</div>'; return; }
+  box.innerHTML = arr.map(j => {
+    const st = { queued: '排队中', running: '执行中', completed: '完成', failed: '失败', timed_out: '超时', interrupted: '中断' }[j.status] || j.status;
+    const t = new Date((j.created_at || 0) * 1000).toLocaleTimeString('zh-CN', { hour12: false });
+    return `<div class="jobitem ${j.id === activeId ? 'active' : ''}" onclick="selectJob('${j.id}')">
+      <div class="line1"><span class="id">${j.id}</span>
+        <span class="badge b-${j.status}">${st}</span></div>
+      <div class="p">${escapeHtml(j.params?.prompt || '')}</div>
+      <div class="t">${t} · ${j.workflow_id} · ${j.params?.aspect_ratio || ''} ${j.params?.resolution || ''}${j.params?.duration_s ? ' · ' + j.params.duration_s + 's' : ''}${j.params?.batch_size ? ' · ' + j.params.batch_size + ' 张' : ''}${j.files?.length ? ' · ' + j.files.length + ' 文件' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---------- 任务面板 ----------
+function selectJob(id) { activeId = id; renderHistory(); renderStage(); }
+
+function setSteps(states) {
+  document.querySelectorAll('#pipeline .step').forEach(el => {
+    const s = states[el.dataset.step];
+    el.className = 'step' + (s ? ' ' + s : '');
+  });
+}
+
+function renderStage() {
+  const j = activeId ? jobs.get(activeId) : null;
+  const empty = $('stageempty'), live = $('live'), viz = $('viz');
+  $('stageerr').innerHTML = ''; $('stagedry').innerHTML = '';
+  if (!j) {
+    empty.style.display = ''; live.style.display = 'none'; viz.style.display = 'none';
+    stopTicker();
+    $('gallerywrap').innerHTML = ''; $('stagejobid').textContent = ''; $('stagemeta').textContent = '';
+    return;
+  }
+  empty.style.display = 'none';
+  $('stagejobid').textContent = '#' + j.id;
+  const meta = [j.workflow_id, j.params?.aspect_ratio, j.params?.resolution,
+    j.params?.duration_s ? j.params.duration_s + 's' : '',
+    j.params?.batch_size ? j.params.batch_size + ' 张' : '',
+    j.params?.seed ? 'seed ' + j.params.seed : ''].filter(Boolean).join(' · ');
+  $('stagemeta').textContent = meta;
+
+  // 步骤条
+  if (j.status === 'queued') {
+    setSteps({ queued: 'active' });
+    $('stepsub4').textContent = '等待任务';
+  } else if (j.status === 'running') {
+    setSteps({ queued: 'done', running: 'active' });
+    $('stepsub2').textContent = j.progress ? '采样 ' + j.progress.percent + '%' : 'ComfyUI 采样';
+    $('stepsub4').textContent = '等待任务';
+  } else if (j.status === 'completed') {
+    setSteps({ queued: 'done', running: 'done', collect: 'done', done: 'done' });
+    $('stepsub4').textContent = (j.files || []).length + ' 个文件';
+  } else {
+    setSteps({ queued: 'done', running: j.status === 'failed' || j.status === 'timed_out' || j.status === 'interrupted' ? 'fail' : 'done', done: 'fail' });
+    $('stepsub4').textContent = j.status === 'failed' ? '任务失败' : (j.status === 'interrupted' ? '任务中断' : '超时');
+  }
+
+  // 进程可视化面板（运行中）+ 实时预览（工作流输出预览帧时）
+  const running = j.status === 'running';
+  const showLive = running && j.preview_url;
+  if (running) {
+    viz.style.display = '';
+    const p = (j.progress && j.progress.percent) || 0;
+    $('vizpct').textContent = p + '%';
+    $('vizfill').style.width = p + '%';
+    updateVizMeta(j);
+    startTicker(j);
+  } else {
+    viz.style.display = 'none';
+    stopTicker();
+  }
+
+  if (showLive) {
+    live.style.display = '';
+    const t = Date.now();
+    if ($('liveimg').src.indexOf('preview.png') < 0 || t - liveTs > 300) {
+      liveTs = t;
+      $('liveimg').src = j.preview_url + '?t=' + t;
+    }
+  } else {
+    live.style.display = 'none';
+    $('liveimg').removeAttribute('src');
+  }
+
+  // 画廊 / 错误 / 空态
+  if (j.status === 'completed') {
+    $('gallerywrap').innerHTML = renderGallery(j);
+  } else if (j.status === 'failed' || j.status === 'timed_out' || j.status === 'interrupted') {
+    $('gallerywrap').innerHTML = '';
+    $('stageerr').innerHTML = '<div class="errbox">' + escapeHtml(j.error || j.status) + '</div>';
+  } else {
+    $('gallerywrap').innerHTML = '';
+  }
+}
+
+// 已用时秒表
+let ticker = null;
+function updateVizMeta(j) {
+  const p = j.progress;
+  const elapsed = p?.elapsed != null ? p.elapsed
+    : Math.max(0, Math.round(Date.now() / 1000 - (j.started_at || Date.now() / 1000)));
+  const steps = p ? p.value + ' / ' + p.max : '…';
+  $('vizmeta').textContent = '采样 ' + steps + ' · 已用时 ' + elapsed + 's · ComfyUI 云端执行中';
+}
+function startTicker(j) {
+  stopTicker();
+  ticker = setInterval(() => {
+    const cur = jobs.get(j.id);
+    if (!cur || cur.status !== 'running') { stopTicker(); return; }
+    updateVizMeta(cur);
+  }, 1000);
+}
+function stopTicker() { if (ticker) { clearInterval(ticker); ticker = null; } }
+
+function renderGallery(j) {
+  const files = j.files || [];
+  if (!files.length) return '<div class="infobox">任务已完成，但没有收集到文件。可能该工作流的输出未被标准接口暴露，请检查工作流是否包含保存节点。</div>';
+  return '<div class="gallery">' + files.map(f => {
+    const ext = (f.filename.split('.').pop() || '').toLowerCase();
+    const isImg = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
+    const isVid = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+    const media = isImg
+      ? `<img src="${f.url}" loading="lazy" alt="${escapeHtml(f.filename)}">`
+      : isVid ? `<video src="${f.url}" controls preload="metadata"></video>`
+      : `<div style="padding:20px;text-align:center;color:#9ca3af">📄 文件</div>`;
+    const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.round(f.size / 1024) + ' KB';
+    return `<div class="fcard">${media}<div class="fmeta">
+      <div class="fname">${escapeHtml(f.filename)}</div>
+      <div class="frow">${f.picked ? '<span class="picked-tag">✓ 选中</span>' : ''}
+        <span>${size}</span><span style="flex:1"></span>
+        <a href="${f.url}" target="_blank">下载</a></div>
+    </div></div>`;
+  }).join('') + '</div>';
+}
+
+// ---------- 提交生成 ----------
+async function generate(dry) {
+  $('composererr').innerHTML = '';
+  const prompt = $('prompt').value.trim();
+  if (!prompt) { $('composererr').innerHTML = '<div class="errbox">请输入提示词</div>'; return; }
+  if (!key()) { $('composererr').innerHTML = '<div class="errbox">请先在右上角填入 API Key</div>'; $('apikey').focus(); return; }
+  if (!$('wf').value) {
+    refreshWorkflows();  // 主动重试一次（例如刚填完 Key 还没加载完成）
+    $('composererr').innerHTML = '<div class="errbox">工作流列表尚未加载。请确认右上角已填入正确的 API Key，稍候 1~2 秒再点生成（列表会自动刷新）</div>';
+    return;
+  }
+  const body = {
+    workflow_id: $('wf').value, prompt, aspect_ratio: $('ar').value,
+    resolution: $('res').value, dry_run: dry
+  };
+  if ($('seed').value.trim()) body.seed = Number($('seed').value);
+  if (media === 'video') {
+    if ($('dur').value) body.duration_s = Number($('dur').value);
+  } else if ($('bs').value) {
+    body.batch_size = Number($('bs').value);
+  }
+  $('go').disabled = true; $('dry').disabled = true;
+  try {
+    const r = await api('/v1/generate', { method: 'POST', body: JSON.stringify(body) });
+    if (r.dry_run) {
+      $('stagedry').innerHTML = '<div class="drybox"><pre>' + JSON.stringify(r.workflow, null, 2) + '</pre></div>';
+    } else {
+      activeId = r.job_id;
+      jobs.set(r.job_id, {
+        id: r.job_id, status: 'queued', workflow_id: body.workflow_id,
+        params: { prompt: body.prompt, aspect_ratio: body.aspect_ratio, resolution: body.resolution, seed: body.seed, batch_size: body.batch_size, duration_s: body.duration_s },
+        created_at: Date.now() / 1000, files: []
+      });
+      renderHistory(); renderStage();
+    }
+  } catch (e) {
+    if (isBlockedError(e)) openBlockModal();
+    else $('composererr').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>';
+  } finally {
+    $('go').disabled = false; $('dry').disabled = false;
+  }
+}
+$('go').onclick = () => generate(false);
+$('dry').onclick = () => generate(true);
+
+// ---------- 结构模板（预设提示词） ----------
+const IMAGE_STYLES = [["cinematic", "电影感"], ["cyberpunk", "赛博朋克"], ["chinese", "国风古韵"], ["healing", "治愈清新"], ["suspense", "悬疑惊悚"], ["scifi", "科幻史诗"], ["portrait", "人像精修"], ["anime", "二次元动漫"]];
+const VIDEO_STYLES = [["cinematic", "电影感叙事"], ["suspense", "悬疑惊悚"], ["scifi", "科幻史诗"], ["chinese", "国风武侠"], ["healing", "治愈日常"], ["action", "动作爽感"], ["documentary", "纪实vlog"], ["anime", "二次元动画"]];
+let media = 'image';
+let PRESET_PLACEHOLDER = '【主体内容】';
+let PRESETS = null;
+
+function setMedia(m) {
+  media = m;
+  const styles = m === 'video' ? VIDEO_STYLES : IMAGE_STYLES;
+  $('style').innerHTML = styles.map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
+  const isVideo = m === 'video';
+  $('bs').style.display = isVideo ? 'none' : '';
+  $('dur').style.display = isVideo ? '' : 'none';
+  $('countlabel').textContent = isVideo ? '生成秒数' : '批量张数';
+  loadPresets();
+}
+
+function loadPresets() {
+  const render = d => {
+    if (d.placeholder) PRESET_PLACEHOLDER = d.placeholder;
+    const cats = media === 'video' ? (d.video_categories || []) : (d.categories || []);
+    const sel = $('preset');
+    sel.innerHTML = '<option value="">选择模板…</option>';
+    cats.forEach(c => {
+      const g = document.createElement('optgroup');
+      g.label = c.name;
+      (c.templates || []).forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.prompt;
+        o.textContent = t.label;
+        g.appendChild(o);
+      });
+      sel.appendChild(g);
+    });
+  };
+  if (PRESETS) { render(PRESETS); return; }
+  fetch('/static/presets.json')
+    .then(r => r.json())
+    .then(d => { PRESETS = d; render(d); })
+    .catch(() => { $('preset').innerHTML = '<option value="">（模板加载失败：请重启 start.bat 服务并刷新页面）</option>'; });
+}
+$('preset').addEventListener('change', e => {
+  const v = e.target.value;
+  if (!v) return;
+  const ta = $('prompt');
+  ta.value = v;
+  ta.focus();
+  const idx = v.indexOf(PRESET_PLACEHOLDER);
+  if (idx >= 0) ta.setSelectionRange(idx, idx + PRESET_PLACEHOLDER.length); // 选中空位，直接输入即可替换
+  $('preset').selectedIndex = 0;
+});
+
+// ---------- 提示词优化 ----------
+$('enh').onclick = async () => {
+  const p = $('prompt').value.trim();
+  if (!p) { $('composererr').innerHTML = '<div class="errbox">请先输入提示词</div>'; return; }
+  $('enh').disabled = true;
+  $('enhancebox').innerHTML = '<div class="infobox">✨ 优化中…</div>';
+  try {
+    const r = await api('/v1/enhance', { method: 'POST', body: JSON.stringify({ prompt: p, style: $('style').value, media: media }) });
+    window._enh = r.enhanced;
+    $('enhancebox').innerHTML =
+      `<div class="infobox"><b>✨ 优化结果</b>（${r.engine === 'llm' ? 'LLM 智能改写' : '规则增强'} · ${r.style_name}风格）
+        <div style="margin:8px 0;line-height:1.7">${escapeHtml(r.enhanced)}</div>
+        <button class="btn" onclick="useEnhanced()">✔ 使用此提示词</button>
+        <button class="btn ghost" onclick="$('enh').click()">↻ 换一种</button>
+      </div>`;
+  } catch (e) {
+    if (isBlockedError(e)) openBlockModal();
+    else $('enhancebox').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>';
+  } finally { $('enh').disabled = false; }
+};
+function useEnhanced() {
+  if (!window._enh) return;
+  $('prompt').value = window._enh;
+  $('enhancebox').innerHTML = '<div class="infobox">已填入输入框，可直接点“▶ 生成”</div>';
+}
+
+// ---------- 工作流列表 & 健康检查 ----------
+let WORKFLOWS = [];
+async function refreshWorkflows() {
+  if (!key()) {
+    $('wf').innerHTML = '<option value="">（请先填写 API Key）</option>';
+    return;
+  }
+  try {
+    const ws = await api('/v1/workflows');
+    WORKFLOWS = ws || [];
+    $('wf').innerHTML = ws.map(w => `<option value="${w.id}">${escapeHtml(w.name)}</option>`).join('') || '<option value="">（workflows/ 目录中没有工作流）</option>';
+  } catch (e) { $('wf').innerHTML = '<option value="">（加载失败，检查 API Key）</option>'; }
+}
+async function refreshHealth() {
+  if (!key()) return;
+  try {
+    const h = await api('/v1/health');
+    document.title = h.ok ? 'ComfyBridge · 已连接' : 'ComfyBridge · 离线';
+    if ($('srvver')) $('srvver').textContent = '服务 v' + (h.version || '?') + (h.ok ? ' · ComfyUI 已连接' : ' · ComfyUI 离线');
+  } catch (e) { /* ignore */ }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- 启动 ----------
+setMedia('image');
+connectSSE();
+refreshWorkflows();
+refreshHealth();
+setInterval(refreshHealth, 20000);
+setInterval(refreshWorkflows, 30000);
+// 选中工作流时按工作流的 media 字段自动切换对应模板/风格/秒数或批量
+$('wf').addEventListener('change', e => {
+  const w = WORKFLOWS.find(x => x.id === e.target.value);
+  if (w && w.media) setMedia(w.media);
+});
+$('prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generate(false); });
+</script>
+</body>
+</html>

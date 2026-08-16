@@ -1,0 +1,11 @@
+{
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "z_image_turbo_bf16.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_bf16.safetensors", "type": "minimax"}},
+  "3": {"class_type": "TextEncodeZImageOmni", "inputs": {"clip": ["2", 0], "prompt": "placeholder", "auto_resize_images": true}},
+  "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+  "5": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["3", 0], "negative": ["6", 0], "latent_image": ["4", 0], "seed": 42, "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},
+  "7": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "8": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["7", 0]}},
+  "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0], "filename_prefix": "comfybridge"}}
+}

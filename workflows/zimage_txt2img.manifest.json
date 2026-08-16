@@ -1,0 +1,20 @@
+{
+  "id": "zimage_txt2img",
+  "name": "Z-Image Turbo 文生图（示例）",
+  "media": "image",
+  "description": "内置示例工作流，用于验证管道；接入你的 ComfyTV 工作流后可删除本文件与 manifest",
+  "workflow_file": "zimage_txt2img.json",
+  "prompt_slots": [
+    {"node": "3", "field": "prompt"}
+  ],
+  "size_slots": [
+    {"node": "4", "width_field": "width", "height_field": "height"}
+  ],
+  "seed_slots": [
+    {"node": "5", "field": "seed"}
+  ],
+  "filename_slots": [
+    {"node": "9", "field": "filename_prefix"}
+  ],
+  "collect": {"mode": "history"}
+}
