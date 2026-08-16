@@ -26,14 +26,16 @@ VIEW_URL_RE = re.compile(r"/view\?([^\s\"']+)")
 
 
 class JobManager:
-    def __init__(self, client: comfy_client.ComfyClient, storage_dir, cfg: dict):
+    def __init__(self, client: comfy_client.ComfyClient, storage_dir, cfg: dict,
+                 default_owner: str | None = None):
         self.client = client
         self.storage = Path(storage_dir)
         (self.storage / "jobs").mkdir(parents=True, exist_ok=True)
         self.cfg = cfg
+        self._default_owner = default_owner  # 升级前遗留的无主任务划归管理员
         self._jobs = {}
         self._lock = threading.Lock()
-        self._subs = set()
+        self._subs = set()                   # (queue, owner)：SSE 订阅按用户隔离
         self._sub_lock = threading.Lock()
         self._prompt_map = {}       # ComfyUI prompt_id -> job_id
         self._ws_throttle = {}      # job_id -> 上次推送时间（实时事件节流）
@@ -110,25 +112,30 @@ class JobManager:
             try:
                 job = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(job, dict) and job.get("id"):
+                    if job.get("owner") is None:
+                        job["owner"] = self._default_owner
                     self._jobs[job["id"]] = job
             except (json.JSONDecodeError, OSError):
                 continue
 
     # ---------------- 事件总线（SSE） ----------------
-    def subscribe(self) -> queue.Queue:
+    def subscribe(self, owner: str | None = None) -> queue.Queue:
+        """订阅实时事件；owner 为 None 时接收全部事件（auth_disabled 调试模式）。"""
         q = queue.Queue(maxsize=200)
         with self._sub_lock:
-            self._subs.add(q)
+            self._subs.add((q, owner))
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
         with self._sub_lock:
-            self._subs.discard(q)
+            self._subs = {(qq, o) for qq, o in self._subs if qq is not q}
 
     def _publish(self, job: dict) -> None:
         snap = dict(job)  # 浅拷贝，避免推送时被后续修改
         with self._sub_lock:
-            for q in list(self._subs):
+            for q, owner in list(self._subs):
+                if owner is not None and job.get("owner") != owner:
+                    continue  # 用户数据隔离：只推送给任务归属者
                 try:
                     q.put_nowait(snap)
                 except queue.Full:
@@ -139,11 +146,12 @@ class JobManager:
         self._publish(job)
 
     # ---------------- 对外 API ----------------
-    def create(self, workflow_id: str, params: dict) -> dict:
+    def create(self, workflow_id: str, params: dict, owner: str | None = None) -> dict:
         job = {
             "id": uuid.uuid4().hex[:12],
             "workflow_id": workflow_id,
             "params": params,
+            "owner": owner,                # 用户隔离：任务归属的 user_id
             "status": "queued",            # queued/running/completed/failed/timed_out
             "created_at": time.time(),
             "started_at": None,
@@ -160,14 +168,28 @@ class JobManager:
     def submit(self, job_id: str) -> None:
         self._exec.submit(self._run, job_id)
 
-    def get(self, job_id: str):
+    def get(self, job_id: str, owner: str | None = None):
+        """按 job_id 查询；owner 非空时校验归属（隔离），非本人任务返回 None。"""
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        if owner is not None and job.get("owner") != owner:
+            return None
+        return job
 
-    def list(self, limit: int = 100):
+    def list(self, limit: int = 100, owner: str | None = None):
+        """最近任务列表；owner 非空时只返回该用户的（隔离）。"""
         with self._lock:
             jobs = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
+        if owner is not None:
+            jobs = [j for j in jobs if j.get("owner") == owner]
         return jobs[:limit]
+
+    def has_running(self) -> bool:
+        """是否有正在执行的任务（供 WS 看门狗判断活动状态）。"""
+        with self._lock:
+            return any(j.get("status") == "running" for j in self._jobs.values())
 
     # ---------------- 内部 ----------------
     def _run(self, job_id: str) -> None:

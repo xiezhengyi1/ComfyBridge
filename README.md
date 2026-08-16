@@ -22,18 +22,40 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 
 浏览器打开 http://127.0.0.1:8000/ 即可用网页测试。
 
-## API 一览（全部需要 `Authorization: Bearer <key>`）
+## API 一览（全部需要 `Authorization: Bearer <key>`，浏览器场景可用 `?key=`）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/v1/generate` | 提交生成任务 |
-| GET | `/v1/jobs/{id}` | 查询任务状态与结果文件 |
-| GET | `/v1/jobs?limit=N` | 最近任务列表 |
-| GET | `/v1/files/{job_id}/{file}` | 下载生成的图片/视频 |
+| GET | `/v1/jobs/{id}` | 查询任务状态与结果文件（仅本人可见） |
+| GET | `/v1/jobs?limit=N` | 最近任务列表（仅本人可见） |
+| GET | `/v1/files/{job_id}/{file}?key=<key>` | 下载生成的图片/视频（需鉴权+归属校验） |
 | GET | `/v1/workflows` | 可用工作流列表 |
 | GET | `/v1/health` | 检查与 ComfyUI 的连通性 |
-| GET | `/v1/events?key=<key>` | SSE 实时流：任务状态/采样进度/预览（EventSource 用） |
+| GET | `/v1/events?key=<key>` | SSE 实时流：任务状态/采样进度/预览（仅本人任务） |
 | POST | `/v1/enhance` | 提示词优化（规则增强，可选 LLM 智能改写） |
+| POST | `/v1/auth/verify` | 在线验证 Key 状态（不消耗）：未知/未使用/已激活/已吊销/管理员 |
+| POST | `/v1/admin/keys` | 管理员：批量生成一次性激活 Key `{count, note}` |
+| GET | `/v1/admin/keys` | 管理员：已发放激活 Key 列表（状态/绑定用户/备注） |
+| POST | `/v1/admin/keys/{key}/revoke` | 管理员：吊销 Key（已绑定的用户一并停用） |
+| GET | `/v1/admin/users` | 管理员：用户记录列表 |
+| POST | `/v1/admin/users/{user_id}/status` | 管理员：启用/停用用户 `{status: active|disabled}` |
+
+### 鉴权体系：一次性激活 Key + 用户数据隔离（v0.4）
+
+- **管理员 Key**：`config.json` 的 `api_keys`（首次启动自动生成并打印，或环境变量
+  `COMFYBRIDGE_API_KEY` 追加）。管理员用它调用 `/v1/admin/keys` 批量生成激活 Key，
+  或在网页端点右上角“🔑 管理”生成/管理。
+- **一次性激活 Key**：`POST /v1/admin/keys`（或 `python genkeys.py <数量> [备注]`）
+  生成。每个 Key 只能使用一次 —— 用户第一次携带它请求任意 `/v1` 接口时，服务端
+  **在线校验并激活**：创建用户记录、把 Key 标记为“已使用”并绑定该用户。
+  此后这把 Key 就是该用户的个人身份 Key，可继续使用；但不能再被第二个人激活。
+- **用户数据隔离**：任务列表/详情、生成的文件下载、SSE 实时事件流全部按用户隔离，
+  用户只能看到自己名下（自己用 Key 创建的）任务与文件。历史遗留的无主任务自动划归管理员。
+- **吊销与停用**：吊销未使用的激活 Key 后它无法再激活；吊销已使用的 Key 会同时停用
+  绑定用户（其 Key 立即失效）；也可直接对用户启用/停用。
+- 前端已内置“在线验证”：在页面右上角填入 Key 会立即显示状态徽标
+  （✓ 管理员 / ✓ 已激活 / 🆕 未使用 · 首次请求自动激活 / ✗ 无效）。
 
 ### 提示词优化与预设
 
@@ -52,10 +74,13 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
     40~90 字高密度自然中文（该模型 Qwen3-VL 文本编码器的偏好写法）。
   - 优化结果（无论哪个引擎）都会经过 LLM 内容审核，审核失败则弹窗提示修改。
 
-## 网页工作台（http://127.0.0.1:8000/）
+## 网页工作台（http://127.0.0.1:8000/ 或部署后的公网地址）
 
 浅色主题工作台：
 
+- **登录门**：打开页面首先要求输入 API Key，点击"验证并进入"后经 `/v1/auth/verify`
+  **在线验证**——Key 正确（管理员/已激活/未使用激活码）才进入工作台；
+  错误/已吊销/被停用的 Key 会被拒绝并停留在登录门（有已保存 Key 时自动验证进入）。
 - **实时更新**：SSE 推送（断线自动切轮询兜底），任务状态即时刷新
 - **任务进程可视化**：排队→执行→收集→完成 步骤条；订阅 ComfyUI WebSocket 获取
   真实采样进度（大百分比 + 动画进度条 + 已用时）；工作流若输出预览帧则实时显示画面
@@ -99,7 +124,8 @@ curl -H "Authorization: Bearer <key>" http://127.0.0.1:8000/v1/jobs/abc123...
    英文等规则无法覆盖的绕过由 LLM 兜底（审核指令见 `safety.py` 的 `_MODERATION_SYSTEM`）。
    LLM 不可用时打印警告并自动退回规则层。每请求约增加 1~2 秒延迟与少量 token 费用。
    ⚠️ `config.json` 内含 API Key，请勿外传或提交到公开仓库。
-3. **鉴权与限流**：Bearer API Key + 每 Key 每分钟限流，防他人白嫖你的 GPU。
+3. **鉴权与限流**：管理员 Key + 一次性激活 Key（每个 Key 只能绑定一个用户）+
+   每 Key 每分钟限流，防他人白嫖你的 GPU；用户数据相互隔离。
 4. **输入防护**：Pydantic 强校验、控制字符剥离、长度截断、无模板执行、文件下载防路径穿越。
 5. **无 SSRF**：ComfyUI 地址只读自配置，用户不可指定任意目标。
 
@@ -114,7 +140,7 @@ curl -H "Authorization: Bearer <key>" http://127.0.0.1:8000/v1/jobs/abc123...
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `comfyui_base_url` | 你的 pod 地址 | 云端 ComfyUI |
-| `api_keys` | 自动生成 | 允许的 Key 列表 |
+| `api_keys` | 自动生成 | 管理员 Key 列表（可生成一次性激活 Key 分发给用户） |
 | `rate_limit_per_minute` | 10 | 每 Key 限流 |
 | `max_concurrent_jobs` | 2 | 并发任务数 |
 | `job_timeout` | 900 | 单任务超时秒数 |
@@ -143,6 +169,10 @@ nohup python -m uvicorn app:app --host 0.0.0.0 --port 8000 > bridge.log 2>&1 &
 
 > ⚠️ Compshare 通常只公开主端口（你的 ComfyUI 8188）。若 pod 控制台**不支持额外端口映射**，
 > 8000 端口无法对外访问，需改用方案 B/C。
+>
+> **公网访问地址（用户访问此网站即用这个 URL）**：`deploy_pod.sh` 顶部已定义
+> `PUBLIC_BASE_URL="https://8000-cpod-1u2zhjzg91gm.pod.compshare.cn"`（Compshare 对
+> `<端口>-cpod-<podid>` 通配路由）。用户打开该地址会先看到 API Key 登录门。
 
 ### 方案 B：轻量云服务器（阿里云/腾讯云，推荐，稳定）
 

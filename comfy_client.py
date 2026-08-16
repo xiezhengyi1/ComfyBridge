@@ -100,8 +100,9 @@ class ComfyListener:
     - 二进制帧：JSON 头（type=preview）+ PNG 图片字节，回调时以 msg["_image"] 携带
     """
 
-    def __init__(self, base_url: str, client_id: str, on_event):
+    def __init__(self, base_url: str, client_id: str, on_event, is_busy=None):
         self.on_event = on_event
+        self.is_busy = is_busy or (lambda: False)
         self._stop = threading.Event()
         self.ws_url = (
             base_url.replace("https://", "wss://").replace("http://", "ws://")
@@ -121,14 +122,26 @@ class ComfyListener:
             ws = None
             try:
                 ws = create_connection(self.ws_url, timeout=30, max_size=64 * 1024 * 1024)
-                ws.settimeout(30)
+                ws.settimeout(15)
+                print(f"[ComfyListener] WebSocket 已连接: {self.ws_url[:64]}…")
+                last_msg = time.time()
                 while not self._stop.is_set():
                     try:
                         raw = ws.recv()
                     except WebSocketTimeoutException:
+                        # 半开连接（pod 重启后）recv() 只超时不报错，会永远挂死。
+                        # 看门狗按活动状态自适应：
+                        #   有任务在跑（进度本应流动）-> 30s 无消息即重连
+                        #   空闲（ComfyUI 不发保活消息属正常）-> 300s 才重连
+                        stale = 30 if self.is_busy() else 300
+                        if time.time() - last_msg > stale:
+                            print(f"[ComfyListener] {stale}s 无消息，强制重连")
+                            break
                         continue
                     except Exception:
                         break
+                    if raw:
+                        last_msg = time.time()
                     if isinstance(raw, str):
                         try:
                             self.on_event(json.loads(raw))
@@ -152,8 +165,8 @@ class ComfyListener:
                             self.on_event(header)
                         except Exception:
                             pass
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ComfyListener] 连接异常: {str(e)[:100]}，3s 后重连")
             finally:
                 try:
                     if ws is not None:

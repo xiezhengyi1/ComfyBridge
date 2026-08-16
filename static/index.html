@@ -21,6 +21,21 @@ header{display:flex;align-items:center;gap:14px;padding:10px 20px;background:var
 header .spacer{flex:1}
 header label{color:var(--muted);font-size:13px}
 #apikey{width:300px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px}
+.keybadge{font-size:12px;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+/* 登录门：进入工作台前必须通过在线验证 */
+#gate{position:fixed;inset:0;z-index:200;background:linear-gradient(160deg,#0f172a 0%,#1e3a5f 60%,#0f2a43 100%);
+  display:flex;align-items:center;justify-content:center}
+.gate-card{background:#fff;border-radius:16px;padding:34px 38px;width:min(420px,92vw);
+  box-shadow:0 24px 60px rgba(0,0,0,.35);text-align:center;animation:pop .25s ease}
+.gate-logo{font-size:22px;font-weight:800;color:var(--accent);letter-spacing:.5px}
+.gate-card h1{margin:14px 0 6px;font-size:19px;color:#1f2937}
+.gate-sub{margin:0 0 18px;font-size:13px;color:#6b7280;line-height:1.7}
+#gatekey{width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;
+  box-sizing:border-box;font-family:Consolas,monospace}
+#gatekey:focus{outline:2px solid #bfdbfe;border-color:var(--accent)}
+#gatebtn{width:100%;margin-top:12px;padding:12px}
+#gateerr{min-height:22px;margin-top:10px;font-size:13px;color:var(--err);font-weight:600}
+.gate-tip{margin:16px 0 0;font-size:12px;color:#9ca3af;line-height:1.6}
 main{max-width:1280px;margin:0 auto;padding:16px 20px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;
   box-shadow:0 1px 3px rgba(16,24,40,.06)}
@@ -133,6 +148,18 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
 </style>
 </head>
 <body>
+<!-- 登录门：未通过在线验证前不展示工作台 -->
+<div id="gate">
+  <div class="gate-card">
+    <div class="gate-logo">🎬 ComfyBridge</div>
+    <h1>请输入 API Key</h1>
+    <p class="gate-sub">本工作台受访问控制保护，请输入管理员分发给你的 API Key 验证后进入。<br>没有 Key 请联系管理员获取。</p>
+    <input id="gatekey" type="password" placeholder="粘贴 API Key" autocomplete="off">
+    <button class="btn" id="gatebtn">🔓 验证并进入</button>
+    <div id="gateerr"></div>
+    <p class="gate-tip">每个 Key 首次使用自动激活绑定；<br>验证通过后将自动进入工作台。</p>
+  </div>
+</div>
 <header>
   <div class="logo">🎬 ComfyBridge <span class="dot" id="wsdot" title="实时连接状态"></span></div>
   <span id="wsstatus" style="font-size:12px;color:#9ca3af">未连接</span>
@@ -140,6 +167,9 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
   <div class="spacer"></div>
   <label>API Key</label>
   <input id="apikey" placeholder="粘贴 API Key（自动保存）" autocomplete="off">
+  <span id="keystatus" class="keybadge"></span>
+  <button class="btn ghost" id="adminbtn" style="display:none;padding:7px 12px;font-size:12px" title="生成与管理一次性激活 Key">🔑 管理</button>
+  <button class="btn ghost" id="logoutbtn" style="padding:7px 12px;font-size:12px" title="退出并返回登录门">退出</button>
 </header>
 
 <main>
@@ -245,6 +275,28 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
   </div>
 </div>
 
+<!-- 管理员面板：生成与管理一次性激活 Key（仅管理员 Key 可见入口） -->
+<div class="modal-mask" id="adminmodal" style="display:none" onclick="if(event.target===this)closeAdmin()">
+  <div class="modal" style="text-align:left;width:min(720px,94vw)">
+    <h3 style="margin:0 0 4px">🔑 激活 Key 管理</h3>
+    <p style="margin:0 0 14px;font-size:13px;color:#6b7280">
+      一次性激活 Key 分发给用户：每个 Key 只能激活一个用户（首次请求自动绑定），分发后请立即复制保存。
+      每个用户的任务/文件/实时事件相互隔离。</p>
+    <div class="ctl-row" style="margin-top:0">
+      <div class="field"><span>生成数量</span><input id="gencount" type="text" value="1" style="width:70px"></div>
+      <div class="field" style="flex:1"><span>备注（可选）</span><input id="gennote" type="text" placeholder="如：客户A 试用"></div>
+      <button class="btn" onclick="genKeys()">生成</button>
+    </div>
+    <div id="genresult"></div>
+    <div class="ctl-row" style="margin-top:10px">
+      <button class="btn ghost" onclick="renderAdminKeys()">📋 已发放 Key</button>
+      <button class="btn ghost" onclick="renderAdminUsers()">👥 用户列表</button>
+      <button class="btn ghost" onclick="closeAdmin()" style="margin-left:auto">关闭</button>
+    </div>
+    <div id="adminbody" style="margin-top:10px;max-height:44vh;overflow:auto"></div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 let jobs = new Map();       // job_id -> job
@@ -258,11 +310,113 @@ const key = () => ($('apikey').value || '').trim();
 $('apikey').value = localStorage.getItem('cbkey') || '';
 $('apikey').addEventListener('change', () => {
   localStorage.setItem('cbkey', key());
+  verifyKey();
   connectSSE();
   refreshWorkflows();   // 填 Key 后立即拉取工作流列表
   refreshHealth();
 });
 $('apikey').addEventListener('input', () => localStorage.setItem('cbkey', key()));
+
+// ---------- Key 在线验证（不消耗；激活 Key 首次请求业务接口时才会自动激活绑定） ----------
+async function verifyKey() {
+  const k = key();
+  const el = $('keystatus');
+  const adminBtn = $('adminbtn');
+  if (!k) { el.textContent = ''; adminBtn.style.display = 'none'; return; }
+  el.textContent = '校验中…'; el.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/v1/auth/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: k })
+    }).then(r => r.json());
+    if (!r.valid) { el.textContent = '✗ ' + (r.message || '无效 Key'); el.style.color = 'var(--err)'; }
+    else if (r.role === 'admin') { el.textContent = '✓ 管理员'; el.style.color = 'var(--ok)'; }
+    else if (r.status === 'unused') { el.textContent = '🆕 未使用 · 首次请求自动激活'; el.style.color = 'var(--warn)'; }
+    else { el.textContent = '✓ 已激活'; el.style.color = 'var(--ok)'; }
+    adminBtn.style.display = (r.role === 'admin') ? '' : 'none';
+  } catch (e) {
+    el.textContent = '校验失败'; el.style.color = 'var(--muted)';
+    adminBtn.style.display = 'none';
+  }
+}
+// 浏览器无自定义请求头的场景（图片/视频/下载/SSE）用 ?key= 传 Key
+function authUrl(u) {
+  const k = key();
+  if (!k || !u) return u;
+  return u + (u.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k);
+}
+
+// ---------- 登录门（进入工作台前必须在线验证 API Key） ----------
+function showGate(msg) {
+  $('gate').style.display = 'flex';
+  if (msg !== undefined) $('gateerr').textContent = msg;
+}
+function enterApp() {
+  $('gate').style.display = 'none';
+  $('gateerr').textContent = '';
+  connectSSE();
+  verifyKey();
+  refreshWorkflows();
+  refreshHealth();
+}
+async function gateLogin() {
+  const k = $('gatekey').value.trim();
+  if (!k) { $('gateerr').textContent = '请先输入 API Key'; $('gatekey').focus(); return; }
+  $('gatebtn').disabled = true;
+  $('gateerr').textContent = '验证中…';
+  $('gateerr').style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/v1/auth/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: k })
+    }).then(r => r.json());
+    $('gateerr').style.color = 'var(--err)';
+    if (!r.valid) {
+      // 错误 Key：拒绝进入，停留在登录门
+      $('gateerr').textContent = '✗ 验证失败：' + (r.message || '无效的 API Key');
+      $('gatekey').select();
+      return;
+    }
+    localStorage.setItem('cbkey', k);
+    $('apikey').value = k;
+    enterApp();
+  } catch (e) {
+    $('gateerr').style.color = 'var(--err)';
+    $('gateerr').textContent = '✗ 无法连接服务器，请确认服务已启动后重试';
+  } finally {
+    $('gatebtn').disabled = false;
+  }
+}
+$('gatebtn').onclick = gateLogin;
+$('gatekey').addEventListener('keydown', e => { if (e.key === 'Enter') gateLogin(); });
+$('logoutbtn').onclick = () => {
+  if (ES) { ES.close(); ES = null; }
+  stopFallback();
+  localStorage.removeItem('cbkey');
+  $('apikey').value = '';
+  $('gatekey').value = '';
+  showGate('请重新输入 API Key 进入');
+  $('gatekey').focus();
+};
+// 打开页面时：有已保存 Key 则自动验证进入；无效/没有则停留在登录门
+async function autoLogin() {
+  const k = localStorage.getItem('cbkey');
+  if (!k) { showGate(''); return; }
+  $('gatekey').value = k;
+  $('gateerr').textContent = '正在验证已保存的 Key…';
+  $('gateerr').style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/v1/auth/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: k })
+    }).then(r => r.json());
+    $('gateerr').style.color = 'var(--err)';
+    if (r.valid) { $('apikey').value = k; enterApp(); return; }
+    showGate('✗ 上次保存的 Key 已失效（' + (r.message || '无效') + '），请重新输入');
+  } catch (e) {
+    showGate('✗ 无法连接服务器，请确认服务已启动');
+  }
+}
 
 async function api(path, opts = {}) {
   const k = key();
@@ -401,9 +555,9 @@ function renderStage() {
   const showLive = running && j.preview_url;
   if (running) {
     viz.style.display = '';
-    const p = (j.progress && j.progress.percent) || 0;
-    $('vizpct').textContent = p + '%';
-    $('vizfill').style.width = p + '%';
+    const hasP = j.progress && j.progress.percent > 0;
+    $('vizpct').textContent = hasP ? (j.progress.percent + '%') : '…';
+    $('vizfill').style.width = (hasP ? j.progress.percent : 0) + '%';
     updateVizMeta(j);
     startTicker(j);
   } else {
@@ -416,7 +570,7 @@ function renderStage() {
     const t = Date.now();
     if ($('liveimg').src.indexOf('preview.png') < 0 || t - liveTs > 300) {
       liveTs = t;
-      $('liveimg').src = j.preview_url + '?t=' + t;
+      $('liveimg').src = authUrl(j.preview_url) + '&t=' + t;
     }
   } else {
     live.style.display = 'none';
@@ -440,8 +594,10 @@ function updateVizMeta(j) {
   const p = j.progress;
   const elapsed = p?.elapsed != null ? p.elapsed
     : Math.max(0, Math.round(Date.now() / 1000 - (j.started_at || Date.now() / 1000)));
-  const steps = p ? p.value + ' / ' + p.max : '…';
-  $('vizmeta').textContent = '采样 ' + steps + ' · 已用时 ' + elapsed + 's · ComfyUI 云端执行中';
+  const state = (p && p.percent > 0)
+    ? '采样 ' + p.value + ' / ' + p.max
+    : '模型加载 / 采样中…';
+  $('vizmeta').textContent = state + ' · 已用时 ' + elapsed + 's · ComfyUI 云端执行中';
 }
 function startTicker(j) {
   stopTicker();
@@ -460,16 +616,17 @@ function renderGallery(j) {
     const ext = (f.filename.split('.').pop() || '').toLowerCase();
     const isImg = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
     const isVid = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+    const u = authUrl(f.url);
     const media = isImg
-      ? `<img src="${f.url}" loading="lazy" alt="${escapeHtml(f.filename)}">`
-      : isVid ? `<video src="${f.url}" controls preload="metadata"></video>`
+      ? `<img src="${u}" loading="lazy" alt="${escapeHtml(f.filename)}">`
+      : isVid ? `<video src="${u}" controls preload="metadata"></video>`
       : `<div style="padding:20px;text-align:center;color:#9ca3af">📄 文件</div>`;
     const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.round(f.size / 1024) + ' KB';
     return `<div class="fcard">${media}<div class="fmeta">
       <div class="fname">${escapeHtml(f.filename)}</div>
       <div class="frow">${f.picked ? '<span class="picked-tag">✓ 选中</span>' : ''}
         <span>${size}</span><span style="flex:1"></span>
-        <a href="${f.url}" target="_blank">下载</a></div>
+        <a href="${u}" target="_blank">下载</a></div>
     </div></div>`;
   }).join('') + '</div>';
 }
@@ -508,6 +665,7 @@ async function generate(dry) {
         created_at: Date.now() / 1000, files: []
       });
       renderHistory(); renderStage();
+      verifyKey();  // 激活 Key 首次请求后已被绑定，刷新状态徽标
     }
   } catch (e) {
     if (isBlockedError(e)) openBlockModal();
@@ -598,6 +756,81 @@ function useEnhanced() {
   $('enhancebox').innerHTML = '<div class="infobox">已填入输入框，可直接点“▶ 生成”</div>';
 }
 
+// ---------- 管理员面板（生成/管理一次性激活 Key） ----------
+function openAdmin() { $('adminmodal').style.display = 'flex'; renderAdminKeys(); }
+function closeAdmin() { $('adminmodal').style.display = 'none'; }
+$('adminbtn').onclick = openAdmin;
+
+async function genKeys() {
+  const count = Math.max(1, Math.min(100, Number($('gencount').value) || 1));
+  const note = $('gennote').value.trim();
+  $('genresult').innerHTML = '<div class="infobox">生成中…</div>';
+  try {
+    const r = await api('/v1/admin/keys', { method: 'POST', body: JSON.stringify({ count, note }) });
+    const list = (r.keys || []).map(x =>
+      `<div style="display:flex;align-items:center;gap:8px;font-family:Consolas,monospace;font-size:12px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:4px 0">
+        <span style="flex:1;word-break:break-all">${escapeHtml(x.key)}</span>
+        <button class="btn ghost" style="padding:4px 10px;font-size:12px" onclick="copyKey(this)">复制</button>
+      </div>`).join('');
+    $('genresult').innerHTML = `<div class="infobox">已生成 ${(r.keys || []).length} 个激活 Key（仅显示一次，请立即复制分发）：</div>` + list;
+  } catch (e) {
+    $('genresult').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>';
+  }
+}
+function copyKey(btn) {
+  const txt = btn.parentElement.querySelector('span').textContent;
+  const done = () => { btn.textContent = '已复制'; setTimeout(() => btn.textContent = '复制', 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done);
+  else {
+    const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove(); done();
+  }
+}
+async function renderAdminKeys() {
+  $('adminbody').innerHTML = '<div class="infobox">加载中…</div>';
+  try {
+    const r = await api('/v1/admin/keys');
+    const ks = r.keys || [];
+    if (!ks.length) { $('adminbody').innerHTML = '<div class="empty" style="padding:24px">暂无发放记录</div>'; return; }
+    const ST = { unused: ['未使用', 'var(--warn)'], used: ['已使用', 'var(--ok)'], revoked: ['已吊销', 'var(--err)'] };
+    $('adminbody').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">Key</th><th style="padding:4px">状态</th><th style="padding:4px">绑定用户</th><th style="padding:4px">备注</th><th style="padding:4px">创建时间</th><th style="padding:4px"></th></tr>' +
+      ks.map(k => {
+        const st = ST[k.status] || [k.status, 'var(--muted)'];
+        const t = new Date((k.created_at || 0) * 1000).toLocaleString('zh-CN', { hour12: false });
+        const rev = k.status === 'unused' ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="revokeKey('${k.key}')">吊销</button>` : '';
+        return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;word-break:break-all;padding:6px 4px">${escapeHtml(k.key)}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px">${escapeHtml(k.bound_user || '—')}</td><td style="padding:6px 4px">${escapeHtml(k.note || '')}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${rev}</td></tr>`;
+      }).join('') + '</table>';
+  } catch (e) { $('adminbody').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>'; }
+}
+async function renderAdminUsers() {
+  $('adminbody').innerHTML = '<div class="infobox">加载中…</div>';
+  try {
+    const r = await api('/v1/admin/users');
+    const us = r.users || [];
+    if (!us.length) { $('adminbody').innerHTML = '<div class="empty" style="padding:24px">暂无用户</div>'; return; }
+    $('adminbody').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">用户 ID</th><th style="padding:4px">角色</th><th style="padding:4px">状态</th><th style="padding:4px">激活时间</th><th style="padding:4px"></th></tr>' +
+      us.map(u => {
+        const st = u.status === 'active' ? ['启用', 'var(--ok)'] : ['停用', 'var(--err)'];
+        const t = new Date((u.activated_at || 0) * 1000).toLocaleString('zh-CN', { hour12: false });
+        const act = u.role === 'user'
+          ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="setUserStatus('${u.user_id}','${u.status === 'active' ? 'disabled' : 'active'}')">${u.status === 'active' ? '停用' : '启用'}</button>`
+          : '';
+        return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;padding:6px 4px">${escapeHtml(u.user_id)}</td><td style="padding:6px 4px">${u.role === 'admin' ? '管理员' : '用户'}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${act}</td></tr>`;
+      }).join('') + '</table>';
+  } catch (e) { $('adminbody').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>'; }
+}
+async function revokeKey(k) {
+  if (!confirm('吊销后该 Key 无法再使用（若已激活将同时停用对应用户），确认？')) return;
+  try { await api('/v1/admin/keys/' + encodeURIComponent(k) + '/revoke', { method: 'POST' }); renderAdminKeys(); }
+  catch (e) { alert(e.message); }
+}
+async function setUserStatus(uid, st) {
+  try { await api('/v1/admin/users/' + encodeURIComponent(uid) + '/status', { method: 'POST', body: JSON.stringify({ status: st }) }); renderAdminUsers(); }
+  catch (e) { alert(e.message); }
+}
+
 // ---------- 工作流列表 & 健康检查 ----------
 let WORKFLOWS = [];
 async function refreshWorkflows() {
@@ -633,12 +866,10 @@ function escapeHtml(s) {
 }
 
 // ---------- 启动 ----------
-setMedia('image');
-connectSSE();
-refreshWorkflows();
-refreshHealth();
+setMedia('image');   // 初始化模板/风格选项（登录门通过后才展示）
 setInterval(refreshHealth, 20000);
 setInterval(refreshWorkflows, 30000);
+autoLogin();         // 先过登录门（在线验证），通过后才启动 SSE/工作流/健康检查
 // 选中工作流时按工作流的 media 字段自动切换对应模板/风格/秒数或批量，并持久化选择
 $('wf').addEventListener('change', e => {
   const w = WORKFLOWS.find(x => x.id === e.target.value);

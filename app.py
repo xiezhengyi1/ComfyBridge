@@ -5,9 +5,15 @@
     pip install -r requirements.txt
     python -m uvicorn app:app --host 127.0.0.1 --port 8000
 
-首次启动会在控制台打印自动生成的 API Key，所有 /v1 请求需带
-    Authorization: Bearer <key>  或  X-API-Key: <key>
-SSE 实时流（EventSource 无法自定义请求头）用查询参数: /v1/events?key=<key>
+鉴权体系（v0.4，激活码模式）：
+- 管理员 Key：config.json 的 api_keys（或环境变量 COMFYBRIDGE_API_KEY）。
+  管理员可 POST /v1/admin/keys 批量生成一次性激活 Key 分发给用户。
+- 激活 Key：每个 Key 只能用一次 —— 第一次携带它请求任意 /v1 接口时在线校验并激活，
+  绑定为当前用户的个人身份 Key；此后该 Key 继续可用，但不能被第二个人激活。
+- 用户数据隔离：每个用户只能看到自己的任务、文件与 SSE 实时流。
+- 鉴权方式：Authorization: Bearer <key> 或 X-API-Key: <key>；
+  浏览器场景（SSE/图片/下载无法带自定义头）用查询参数: /v1/events?key=<key>、
+  /v1/files/...?key=<key>。
 """
 import asyncio
 import json
@@ -28,6 +34,7 @@ import safety
 import workflow_engine
 from comfy_client import ComfyClient, ComfyListener
 from job_manager import JobManager
+from key_registry import KeyRegistry
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -37,28 +44,34 @@ cfg = cfg_mod.load_config()
 client = None
 listener = None
 job_manager = None
+registry = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, listener, job_manager
+    global client, listener, job_manager, registry
     key = cfg_mod.bootstrap(cfg)
+    registry = KeyRegistry(BASE_DIR / "storage", cfg)
     if key:
         print("\n" + "=" * 60)
-        print("  ComfyBridge API Key: " + key)
+        print("  ComfyBridge 管理员 API Key: " + key)
+        print("  管理员可调用 POST /v1/admin/keys 批量生成一次性激活 Key")
+        print("  普通用户拿到激活 Key 后，首次请求任意 /v1 接口即自动激活绑定")
         print("  所有 /v1 请求请携带 Authorization: Bearer <key>")
         print("  网页端在页面里输入同一个 Key 即可")
         print("=" * 60 + "\n")
     client = ComfyClient(cfg["comfyui_base_url"])
-    job_manager = JobManager(client, BASE_DIR / "storage", cfg)
-    listener = ComfyListener(cfg["comfyui_base_url"], CLIENT_ID, job_manager.on_ws_event)
+    job_manager = JobManager(client, BASE_DIR / "storage", cfg,
+                             default_owner=registry.admin_owner_id())
+    listener = ComfyListener(cfg["comfyui_base_url"], CLIENT_ID, job_manager.on_ws_event,
+                             is_busy=job_manager.has_running)
     yield
     if listener is not None:
         listener.close()
     job_manager._exec.shutdown(wait=False)
 
 
-app = FastAPI(title="ComfyBridge", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="ComfyBridge", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cfg.get("cors_origins", []),
@@ -70,31 +83,35 @@ app.add_middleware(
 _rate = defaultdict(deque)
 
 
-def _check_key(request: Request, query_key: str = "") -> None:
-    if cfg.get("auth_disabled"):
-        return
-    keys = cfg.get("api_keys") or []
+def _extract_key(request: Request, query_key: str = "") -> str:
+    """从请求中取出 Key：Authorization: Bearer > X-API-Key > ?key= 查询参数。"""
     header = request.headers.get("Authorization", "")
     key = header.removeprefix("Bearer ").strip() if header.startswith("Bearer") else ""
     if not key:
         key = request.headers.get("X-API-Key", "").strip()
     if not key:
-        key = (query_key or "").strip()
-    if key not in keys:
-        raise HTTPException(401, "无效或缺失的 API Key")
+        key = (query_key or request.query_params.get("key", "") or "").strip()
+    return key
+
+
+def _resolve(request: Request, query_key: str = "") -> dict | None:
+    """在线校验 Key 并解析为用户记录；激活 Key 首次使用自动激活绑定（每个 Key 只能用一次）。"""
+    if cfg.get("auth_disabled"):
+        return None
+    key = _extract_key(request, query_key)
+    if not key:
+        raise HTTPException(401, "缺失 API Key")
+    user = registry.resolve_user(key)
+    if user is None:
+        raise HTTPException(401, "无效或已失效的 API Key")
+    return user
 
 
 def require_auth(request: Request):
-    _check_key(request)
-    if cfg.get("auth_disabled"):
-        return
-    keys = cfg.get("api_keys") or []
-    header = request.headers.get("Authorization", "")
-    key = header.removeprefix("Bearer ").strip() if header.startswith("Bearer") else ""
-    if not key:
-        key = request.headers.get("X-API-Key", "").strip()
-    if not key:
-        return  # 查询参数方式走 /v1/events 专用校验
+    user = _resolve(request)
+    if user is None:
+        return None  # auth_disabled：不做用户隔离
+    key = _extract_key(request)
     now = time.time()
     q = _rate[key]
     while q and now - q[0] > 60:
@@ -102,6 +119,19 @@ def require_auth(request: Request):
     if len(q) >= int(cfg.get("rate_limit_per_minute", 10)):
         raise HTTPException(429, "请求过于频繁，请稍后再试")
     q.append(now)
+    return user
+
+
+def require_admin(request: Request):
+    user = require_auth(request)
+    if user is not None and user.get("role") == "admin":
+        return user
+    raise HTTPException(403, "需要管理员 Key")
+
+
+def _owner(user: dict | None) -> str | None:
+    """请求对应的用户 ID（auth_disabled 时返回 None = 不做隔离）。"""
+    return user["user_id"] if user else None
 
 
 # ---------------- 请求模型 ----------------
@@ -136,7 +166,7 @@ def _llm_moderation_check(prompt: str) -> None:
 
 
 @app.post("/v1/generate")
-def generate(req: GenerateRequest, _=Depends(require_auth)):
+def generate(req: GenerateRequest, user=Depends(require_auth)):
     try:
         manifest = workflow_engine.load_manifest(req.workflow_id)
     except workflow_engine.WorkflowError:
@@ -171,26 +201,32 @@ def generate(req: GenerateRequest, _=Depends(require_auth)):
         "seed": req.seed,
         "batch_size": req.batch_size,
         "duration_s": req.duration_s,
-    })
+    }, owner=_owner(user))
     job_manager.submit(job["id"])
     return {"job_id": job["id"], "status": "queued", "poll": f"/v1/jobs/{job['id']}"}
 
 
 @app.get("/v1/jobs/{job_id}")
-def get_job(job_id: str, _=Depends(require_auth)):
-    job = job_manager.get(job_id)
+def get_job(job_id: str, user=Depends(require_auth)):
+    job = job_manager.get(job_id, owner=_owner(user))
     if job is None:
         raise HTTPException(404, f"任务不存在: {job_id}")
     return job
 
 
 @app.get("/v1/jobs")
-def list_jobs(limit: int = 100, _=Depends(require_auth)):
-    return job_manager.list(min(limit, 200))
+def list_jobs(limit: int = 100, user=Depends(require_auth)):
+    return job_manager.list(min(limit, 200), owner=_owner(user))
 
 
 @app.get("/v1/files/{job_id}/{filename}")
-def get_file(job_id: str, filename: str):
+def get_file(job_id: str, filename: str, user=Depends(require_auth)):
+    """下载任务产物。已加鉴权与归属校验：只允许任务归属者访问（浏览器用 ?key= 传参）。"""
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(404, "文件不存在")
+    if user is not None and job.get("owner") != user["user_id"]:
+        raise HTTPException(404, "文件不存在")
     base = (BASE_DIR / "storage" / "jobs" / job_id).resolve()
     target = (base / Path(filename).name).resolve()
     if not target.is_relative_to(base) or not target.is_file():
@@ -268,16 +304,77 @@ def enhance_prompt(req: EnhanceRequest, _=Depends(require_auth)):
             "style_name": prompt_enhance.get_style_name(req.style, req.media), "engine": engine}
 
 
+# ---------------- 鉴权辅助：Key 在线验证 ----------------
+class VerifyRequest(BaseModel):
+    key: str = Field(min_length=1)
+
+
+@app.post("/v1/auth/verify")
+def verify_key(req: VerifyRequest):
+    """在线验证一个 Key 的状态（不消费）：unknown/未使用/已激活/已吊销/管理员。"""
+    return registry.verify(req.key)
+
+
+# ---------------- 管理员接口：激活 Key 生成与管理 ----------------
+class GenerateKeysRequest(BaseModel):
+    count: int = Field(default=1, ge=1, le=100, description="一次生成的数量 1-100")
+    note: str = Field(default="", description="备注（如客户名/用途），可选")
+
+
+@app.post("/v1/admin/keys")
+def admin_generate_keys(req: GenerateKeysRequest, user=Depends(require_admin)):
+    """批量生成一次性激活 Key（每个 Key 首次请求自动激活并绑定一个用户）。"""
+    return {"keys": registry.generate_keys(req.count, req.note.strip())}
+
+
+@app.get("/v1/admin/keys")
+def admin_list_keys(user=Depends(require_admin)):
+    """已发放激活 Key 列表（含状态/绑定用户/备注）。"""
+    return {"keys": registry.list_keys()}
+
+
+@app.post("/v1/admin/keys/{key}/revoke")
+def admin_revoke_key(key: str, user=Depends(require_admin)):
+    """吊销激活 Key；若已绑定用户则一并停用该用户。"""
+    rec = registry.revoke_key(key)
+    if rec is None:
+        raise HTTPException(404, "Key 不存在")
+    return {"revoked": rec}
+
+
+@app.get("/v1/admin/users")
+def admin_list_users(user=Depends(require_admin)):
+    """用户记录列表（用于管理/审计）。"""
+    return {"users": registry.list_users()}
+
+
+class SetUserStatusRequest(BaseModel):
+    status: str = Field(description="active 或 disabled")
+
+
+@app.post("/v1/admin/users/{user_id}/status")
+def admin_set_user_status(user_id: str, req: SetUserStatusRequest,
+                          user=Depends(require_admin)):
+    """启用/停用某个用户（停用后其 Key 全部失效）。"""
+    if req.status not in ("active", "disabled"):
+        raise HTTPException(422, "status 只能是 active / disabled")
+    rec = registry.set_user_status(user_id, req.status)
+    if rec is None:
+        raise HTTPException(404, "用户不存在")
+    return {"user": rec}
+
+
 # ---------------- SSE 实时事件流 ----------------
 @app.get("/v1/events")
 async def events(request: Request, key: str = ""):
-    """实时推送任务状态/进度/预览。EventSource 不支持自定义头，用 ?key= 传 API Key。"""
-    _check_key(request, key)
-    q = job_manager.subscribe()
+    """实时推送任务状态/进度/预览。EventSource 不支持自定义头，用 ?key= 传 API Key。
+    只推送当前用户自己的任务（用户数据隔离）。"""
+    user = _resolve(request, key)
+    q = job_manager.subscribe(owner=_owner(user))
 
     async def gen():
         try:
-            snap = {"type": "snapshot", "jobs": job_manager.list(100)}
+            snap = {"type": "snapshot", "jobs": job_manager.list(100, owner=_owner(user))}
             yield "data: " + json.dumps(snap, ensure_ascii=False) + "\n\n"
             while True:
                 if await request.is_disconnected():

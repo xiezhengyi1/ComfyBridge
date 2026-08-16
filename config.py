@@ -1,11 +1,18 @@
 """ComfyBridge 配置模块。
 
-首次启动时若 config.json 不存在会自动创建，并生成一个随机 API Key（打印在控制台）。
+首次启动时若 config.json 不存在会自动创建，并生成一个随机管理员 API Key（打印在控制台）。
 所有可调项都集中在 config.json 中，改完重启服务生效。
+
+v0.4 鉴权体系：
+- config.json 的 `api_keys`（含自动生成的）是**管理员 Key**：可调用
+  POST /v1/admin/keys 批量生成“一次性激活 Key”分发给普通用户。
+- 普通用户拿到激活 Key 后，首次请求任意 /v1 接口即在线校验并自动激活绑定；
+  每个激活 Key 只能用一次（只能绑定一个用户）。
 
 云部署时支持环境变量覆盖（避免密钥进镜像/仓库）：
   COMFYBRIDGE_COMFYUI_URL   ComfyUI 地址
-  COMFYBRIDGE_API_KEY       桥的 API Key（追加进 api_keys）
+  COMFYBRIDGE_API_KEY       管理员 API Key（追加进 api_keys）
+  COMFYBRIDGE_CORS_ORIGINS  允许跨域来源（逗号分隔，如公网访问地址）
   COMFYBRIDGE_HOST          监听地址（云上设 0.0.0.0）
   COMFYBRIDGE_PORT          监听端口
   COMFYBRIDGE_AUTH_DISABLED 1/true 关闭鉴权（不推荐）
@@ -22,7 +29,8 @@ DEFAULTS = {
     # 你的云上 ComfyUI 地址（不带末尾斜杠）
     "comfyui_base_url": "https://8188-cpod-1u2zhjzg91gm.pod.compshare.cn",
 
-    # API Key 列表。留空数组且 auth_disabled=false 时，启动会自动生成一个并写入本文件。
+    # 管理员 Key 列表（v0.4：可调 /v1/admin/keys 批量生成一次性激活 Key 分发给用户）。
+    # 留空数组且 auth_disabled=false 时，启动会自动生成一个并写入本文件。
     "api_keys": [],
     "auth_disabled": False,          # 调试期可临时设为 true 关闭鉴权（不推荐）
 
@@ -80,6 +88,8 @@ def load_config() -> dict:
         k = env["COMFYBRIDGE_API_KEY"].strip()
         if k and k not in cfg.get("api_keys", []):
             cfg.setdefault("api_keys", []).append(k)
+    if env.get("COMFYBRIDGE_CORS_ORIGINS"):
+        cfg["cors_origins"] = [o.strip() for o in env["COMFYBRIDGE_CORS_ORIGINS"].split(",") if o.strip()]
     if env.get("COMFYBRIDGE_HOST"):
         cfg["host"] = env["COMFYBRIDGE_HOST"].strip()
     if env.get("COMFYBRIDGE_PORT"):
@@ -97,7 +107,7 @@ def save_config(cfg: dict) -> None:
 
 
 def bootstrap(cfg: dict) -> str:
-    """确保存在 API Key，返回用于展示的 key（可能为 None 表示未启用鉴权）。"""
+    """确保存在管理员 API Key，返回用于展示的 key（可能为 None 表示未启用鉴权）。"""
     if cfg.get("auth_disabled"):
         return None
     keys = cfg.get("api_keys") or []
