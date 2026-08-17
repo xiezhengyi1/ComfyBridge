@@ -44,6 +44,10 @@
 | `batch_size_slots` | 批量张数写入位置（API 参数 `batch_size` 1-8；不传则不注入，保持工作流默认值） |
 | `filename_slots` | 输出文件名前缀写入位置 |
 | `force_run_slots` | 可选：写入一次性执行令牌。ComfyTV Stage 建议配置，避免同输入被缓存复用 |
+| `image_slots` | 图生视频注入点：把上传图片按顺序写入自动增长输入的**带点号键**。例 `[{"node":"1","group":"images","prefix":"image","index_base":0}]` → 在节点 inputs 里生成 `"images.image0": url, "images.image1": url, ...`（ComfyTV 前端 `injectAssetRefs` 的键格式：`images.image{N}`，既不是 `images:{...}` 嵌套也不是裸 `image0`） |
+| `min_images` / `max_images` | 该工作流要求/支持的图片数量范围（默认 min=1，max=不限） |
+| `image_groups` | 按「图片数量」选组：`{"1": {"workflow": "后端标签"}, "2": {...}, ...}`。数量命中时把对应字段覆盖到 image_slots 所在节点（如切换 `workflow` 下拉） |
+| `mention_style` | 可选 `"minimax_tags"`：提交前把提示词里的 `@image_N`（0 起）展开成 `<Picture n>`（1 起）标签。桥直接提交 /prompt 绕过了 ComfyTV 前端，此展开须由桥完成 |
 | `collect.mode` | 收集方式：`history` = 从 ComfyUI 输出节点收集（默认） |
 
 > node 数字是 API 格式 JSON 里的节点 ID（键名）。
@@ -69,6 +73,26 @@ curl -X POST http://127.0.0.1:8000/v1/generate \
   `picked: true` 表示选择器选中的那张。
 - **节点 ID 填错**：任务会 failed 并给出“工作流中不存在节点 X”的报错。
 - **提示词字段填错**：ComfyUI 提交时会返回 node_errors，错误会原样存到任务记录。
+
+## 图生视频（按图片数量选组）
+
+内置 `comfytv_i2v`（ComfyTV 图生视频 R2V）演示了完整流程：
+
+1. 前端先 `POST /v1/upload`（multipart，字段 `images`，可多张）把图片送到 ComfyUI 的
+   input 目录，返回每张图的 `view_url`（形如 `/view?filename=...&type=input`）。
+2. `POST /v1/generate` 带上 `"images": [view_url, ...]`。清单里的 `image_slots` 会按顺序
+   把第 i 张图写成 VideoStage 输入的**带点号键** `images.image0`/`images.image1`/…。
+3. `image_groups` 按图片数量（1~9）选择对应组：数量命中时把该组声明的字段（如
+   `workflow` 下拉标签）覆盖到 VideoStage 节点。因为 ComfyUI 是**静态图**，图生视频的
+   每个组是「预接固定数量参考图」的独立后端工作流，所以必须按数量选对应标签——
+   `07_R2V-01：多图参考 (1)` 到 `07_R2V-01：多图参考 (9)`（括号里的数字即参考图数量）。
+   如果画布上的标签名不同，改 `image_groups` 里对应数量的 `workflow` 值即可；
+   可用 `GET /v1/workflows/video-backends` 列出 VideoStage 下拉里的全部可选值核对。
+
+> 提示词里用 `@image_0` / `@image_1` … 指代第 1/2… 张参考图（**从 0 起**，与 ComfyTV
+> 前端一致）。`mention_style: "minimax_tags"` 会让桥在提交前把 `@image_N` 展开成模型
+> 训练的 `<Picture n>` 标签（`@image_0` → `<Picture 1>`；越界引用展开为空）——因为桥直接
+> 提交 `/prompt` 绕过了 ComfyTV 前端，这一步展开必须由桥完成。
 
 ## ComfyTV T2A 文生音频
 

@@ -228,6 +228,7 @@ class JobManager:
                 p.get("seed"),
                 p.get("batch_size"),
                 p.get("duration_s"),
+                p.get("images"),
             )
             p["seed"] = seed
 

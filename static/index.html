@@ -198,6 +198,26 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
   .gallery{grid-template-columns:1fr}
   #logoutbtn{margin-left:auto}
 }
+.dropzone{margin-top:6px;border:2px dashed var(--border);border-radius:10px;background:#f8fafc;
+  padding:22px 16px;text-align:center;cursor:pointer;transition:border-color .15s, background .15s;
+  display:flex;flex-direction:column;align-items:center;gap:4px}
+.dropzone:hover,.dropzone.dragover{border-color:var(--accent);background:#eff6ff}
+.dropzone .dz-icon{font-size:24px;line-height:1}
+.dropzone .dz-title{font-size:13px;color:var(--text);font-weight:600}
+.dropzone .dz-sub{font-size:12px;color:var(--muted)}
+.promptwrap{position:relative}
+.mentionbox{position:absolute;top:calc(100% + 4px);left:0;z-index:60;background:#fff;border:1px solid var(--border);
+  border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.18);min-width:210px;max-width:340px;max-height:200px;overflow-y:auto}
+.mention-item{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer}
+.mention-item:hover,.mention-item.active{background:#eff6ff}
+.mention-item img{width:24px;height:24px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0}
+.mention-item .m-label{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap}
+.mention-item .m-sub{font-size:11px;color:var(--muted)}
+.imglist{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.imgchip{position:relative;width:76px;height:76px;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:#f8fafc}
+.imgchip img{width:100%;height:100%;object-fit:cover}
+.imgchip .idx{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:1px 6px;border-radius:10px}
+.imgchip .x{position:absolute;right:2px;top:2px;border:none;background:rgba(0,0,0,.55);color:#fff;width:18px;height:18px;border-radius:50%;cursor:pointer;font-size:12px;line-height:1;padding:0}
 </style>
 </head>
 <body>
@@ -237,7 +257,7 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
         </select>
       </div>
       <div class="field" id="resfield"><span>分辨率</span>
-        <select id="res"><option>720p</option><option selected>1080p</option><option>2k</option><option>4k</option></select>
+        <select id="res"><option>480p</option><option>720p</option><option selected>1080p</option><option>2k</option><option>4k</option></select>
       </div>
       <div class="field" id="countfield">
         <span id="countlabel">批量张数</span>
@@ -259,7 +279,21 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
       <button class="btn" id="go">▶ 生成</button>
       <button class="btn ghost" id="dry" style="display:none">预览注入 (dry-run)</button>
     </div>
-    <textarea id="prompt" placeholder="输入提示词，例如：年轻女孩在雨夜城市街道上撑着透明雨伞回头微笑，电影感，霓虹灯光，胶片质感"></textarea>
+    <div class="promptwrap">
+      <textarea id="prompt" placeholder="输入提示词，例如：年轻女孩在雨夜城市街道上撑着透明雨伞回头微笑，电影感，霓虹灯光，胶片质感"></textarea>
+      <div id="mentionbox" class="mentionbox" style="display:none"></div>
+    </div>
+    <div class="field" id="imgfield" style="display:none">
+      <span>🖼️ 参考图 <span id="imgcount" style="font-weight:400;color:#9ca3af"></span> <span id="imgmax" style="font-weight:400;color:#9ca3af"></span></span>
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="上传参考图片">
+        <div class="dz-icon">🖼️</div>
+        <div class="dz-title">拖拽图片到这里，或点击选择文件</div>
+        <div class="dz-sub">png / jpg / jpeg / webp / bmp · 可多选 · 按上传顺序编号（第 1 张为首帧）<span id="imgstatus" style="color:var(--accent)"></span></div>
+        <input id="imginp" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" multiple hidden>
+      </div>
+      <div id="imglist" class="imglist" style="display:none"></div>
+      <div class="infobox" style="margin-top:6px;font-size:12px">按上传图片数量自动选择对应组（1~9 张）。在提示词里输入 <code>@</code> 即可弹出缩略图选择并插入 <code>@image_0</code>（第 1 张）、<code>@image_1</code>（第 2 张）…，生成时会自动展开成模型的 <code>&lt;Picture n&gt;</code> 标签。</div>
+    </div>
     <div class="infobox" id="audiohint" style="display:none">🎵 T2A 会把这里的文本作为音频生成提示词传入其用户输入节点。当前远端 T2A 工作流的时长为约 30 秒。</div>
     <div class="ctl-row">
       <div class="field" id="presetfield" style="flex:1;min-width:320px"><span>📌 结构模板（选中后替换【主体内容】空位）</span>
@@ -357,6 +391,7 @@ let ES = null;              // EventSource
 let fallbackTimer = null;
 let liveTs = 0;
 let session = null;
+let uploadedImages = [];    // [{view_url, preview_url}] 图生视频的参考图
 
 // ---------- 基础 ----------
 const authenticated = () => Boolean(session && session.authenticated);
@@ -376,6 +411,32 @@ function clearSession() {
   if (ES) { ES.close(); ES = null; }
   stopFallback();
 }
+// ---------- 草稿持久化：刷新后保留提示词 / 参考图 / 参数（按用户隔离） ----------
+function draftKey() { return 'cbdraft:' + (session?.user_id || 'anon'); }
+function clearDraft() { try { localStorage.removeItem(draftKey()); } catch (e) {} }
+function saveDraft() {
+  try {
+    localStorage.setItem(draftKey(), JSON.stringify({
+      prompt: $('prompt').value,
+      ar: $('ar').value, res: $('res').value, seed: $('seed').value,
+      dur: $('dur').value, bs: $('bs').value,
+      images: uploadedImages.map(it => ({ view_url: it.view_url, preview_url: it.preview_url })),
+    }));
+  } catch (e) {}
+}
+function restoreDraft() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch (e) {}
+  if (!d) return;
+  if (d.prompt) $('prompt').value = d.prompt;
+  if (d.ar) $('ar').value = d.ar;
+  if (d.res) $('res').value = d.res;
+  if (d.seed != null) $('seed').value = d.seed;
+  if (d.dur != null) $('dur').value = d.dur;
+  if (d.bs != null) $('bs').value = d.bs;
+  uploadedImages = (Array.isArray(d.images) ? d.images : []).filter(it => it && it.view_url);
+  renderImageList();
+}
 // 浏览器的图片、视频、下载和 SSE 都依赖同源 HttpOnly Cookie，无需也不会附加 Key。
 function authUrl(u) { return u; }
 
@@ -387,6 +448,7 @@ function showGate(msg) {
 function enterApp() {
   $('gate').style.display = 'none';
   $('gateerr').textContent = '';
+  restoreDraft();
   connectSSE();
   refreshWorkflows();
   refreshHealth();
@@ -424,6 +486,10 @@ $('gatebtn').onclick = gateLogin;
 $('gatekey').addEventListener('keydown', e => { if (e.key === 'Enter') gateLogin(); });
 $('logoutbtn').onclick = async () => {
   try { await api('/v1/auth/logout', { method: 'POST' }); } catch (e) { /* cookie is cleared locally below */ }
+  clearDraft();  // 退出时清除当前用户草稿，避免下一位登录者看到
+  uploadedImages = [];
+  renderImageList();
+  $('prompt').value = '';
   clearSession();
   $('gatekey').value = '';
   showGate('请重新输入 API Key 进入');
@@ -657,6 +723,141 @@ function renderGallery(j) {
   }).join('') + '</div>';
 }
 
+// ---------- 图生视频：参考图上传（拖拽 / 点击） ----------
+function currentWorkflow() { return WORKFLOWS.find(x => x.id === $('wf').value); }
+function syncImageField() {
+  const w = currentWorkflow();
+  const need = !!(w && w.requires_images);
+  $('imgfield').style.display = need ? '' : 'none';
+  if (need) $('imgmax').textContent = w.max_images ? '（最多 ' + w.max_images + ' 张）' : '';
+}
+function renderImageList() {
+  const box = $('imglist');
+  box.innerHTML = uploadedImages.map((it, i) =>
+    `<div class="imgchip"><img src="${it.preview_url || it.view_url}" alt="参考图 ${i + 1}"><span class="idx">${i + 1}</span><button class="x" title="移除" onclick="removeImage(${i})">×</button></div>`
+  ).join('');
+  box.style.display = uploadedImages.length ? 'flex' : 'none';
+  $('imgcount').textContent = uploadedImages.length ? '（' + uploadedImages.length + ' 张）' : '';
+}
+function removeImage(i) {
+  uploadedImages.splice(i, 1);
+  renderImageList();
+  saveDraft();
+}
+async function handleImageFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  const w = currentWorkflow();
+  const maxN = (w && w.max_images) || 9;
+  if (uploadedImages.length + files.length > maxN) {
+    $('composererr').innerHTML = '<div class="errbox">最多上传 ' + maxN + ' 张图片</div>';
+    return;
+  }
+  const fd = new FormData();
+  files.forEach(f => fd.append('images', f));
+  $('imgstatus').textContent = '上传中…';
+  try {
+    // 上传用 multipart，不能走会强设 Content-Type: application/json 的 api() 助手
+    const res = await fetch('/v1/upload', { method: 'POST', credentials: 'same-origin', body: fd });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof j.detail === 'object' ? JSON.stringify(j.detail) : (j.detail || 'HTTP ' + res.status));
+    (j.images || []).forEach(img => uploadedImages.push({ view_url: img.view_url, preview_url: img.preview_url }));
+    renderImageList();
+    saveDraft();
+    $('imgstatus').textContent = '';
+  } catch (err) {
+    $('composererr').innerHTML = '<div class="errbox">图片上传失败：' + escapeHtml(err.message) + '</div>';
+    $('imgstatus').textContent = '';
+  }
+}
+$('imginp').addEventListener('change', e => { handleImageFiles(e.target.files); e.target.value = ''; });
+const dz = $('dropzone');
+dz.addEventListener('click', () => $('imginp').click());
+dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('imginp').click(); } });
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', e => { e.preventDefault(); dz.classList.remove('dragover'); });
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('dragover');
+  if (e.dataTransfer && e.dataTransfer.files) handleImageFiles(e.dataTransfer.files);
+});
+// 防止把文件拖到页面其他位置时浏览器直接跳转到该文件（丢掉当前工作）
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+// ---------- 提示词 @ 提及图片：输入 @ 弹出缩略图选择 ----------
+let mentionIndex = 0;
+let mentionItems = [];
+function activeMention() {
+  const ta = $('prompt');
+  const pos = ta.selectionStart;
+  const before = ta.value.slice(0, pos);
+  const atIdx = before.lastIndexOf('@');
+  if (atIdx < 0) return null;
+  const partial = before.slice(atIdx + 1);
+  if (/[\s,，。()（）【】]/.test(partial)) return null;  // @ 后跟了分隔符，不触发
+  return { atIdx, partial };
+}
+function hideMentionBox() { $('mentionbox').style.display = 'none'; }
+function renderMentionBox(items) {
+  const box = $('mentionbox');
+  mentionItems = items;
+  if (!items.length) { box.style.display = 'none'; return; }
+  box.innerHTML = items.map((it, idx) => `
+    <div class="mention-item ${idx === mentionIndex ? 'active' : ''}" onmousedown="event.preventDefault(); insertMention(${it.i})">
+      <img src="${it.img.preview_url || it.img.view_url}" alt="">
+      <div><div class="m-label">@image_${it.i}</div><div class="m-sub">第 ${it.i + 1} 张参考图</div></div>
+    </div>`).join('');
+  box.style.display = 'block';
+}
+function showMentions() {
+  const m = activeMention();
+  if (!m) { hideMentionBox(); return; }
+  if (!uploadedImages.length) {
+    mentionItems = [];
+    $('mentionbox').innerHTML = '<div class="mention-item" style="cursor:default;color:var(--muted)">🖼️ 请先在上方上传参考图</div>';
+    $('mentionbox').style.display = 'block';
+    return;
+  }
+  const partial = m.partial.toLowerCase();
+  const items = uploadedImages
+    .map((img, i) => ({ img, i, label: '@image_' + i }))
+    .filter(it => !partial || it.label.toLowerCase().includes(partial));
+  mentionIndex = Math.max(0, Math.min(mentionIndex, items.length - 1));
+  renderMentionBox(items);
+}
+function insertMention(i) {
+  const ta = $('prompt');
+  const m = activeMention();
+  const token = '@image_' + i + ' ';
+  const start = m ? m.atIdx : ta.selectionStart;
+  const end = m ? ta.selectionStart : ta.selectionEnd;
+  ta.setRangeText(token, start, end, 'end');
+  hideMentionBox();
+  ta.focus();
+  saveDraft();
+}
+$('prompt').addEventListener('keydown', e => {
+  const box = $('mentionbox');
+  if (box.style.display === 'none') return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!mentionItems.length) return;
+    mentionIndex = (mentionIndex + (e.key === 'ArrowDown' ? 1 : -1) + mentionItems.length) % mentionItems.length;
+    const items = box.querySelectorAll('.mention-item');
+    items.forEach((el, idx) => el.classList.toggle('active', idx === mentionIndex));
+    const act = items[mentionIndex];
+    if (act) act.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (mentionItems[mentionIndex] != null) insertMention(mentionItems[mentionIndex].i);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    hideMentionBox();
+  }
+});
+$('prompt').addEventListener('blur', () => setTimeout(hideMentionBox, 120));
+
 // ---------- 提交生成 ----------
 async function generate(dry) {
   $('composererr').innerHTML = '';
@@ -668,10 +869,16 @@ async function generate(dry) {
     $('composererr').innerHTML = '<div class="errbox">工作流列表尚未加载。请确认右上角已填入正确的 API Key，稍候 1~2 秒再点生成（列表会自动刷新）</div>';
     return;
   }
+  const wf = currentWorkflow();
+  if (wf && wf.requires_images && !uploadedImages.length) {
+    $('composererr').innerHTML = '<div class="errbox">该工作流是图生视频，请先上传参考图片（1~' + (wf.max_images || 9) + ' 张）</div>';
+    return;
+  }
   const body = {
     workflow_id: $('wf').value, prompt, aspect_ratio: $('ar').value,
     resolution: $('res').value, dry_run: dry
   };
+  if (wf && wf.requires_images) body.images = uploadedImages.map(it => it.view_url);
   if ($('seed').value.trim()) body.seed = Number($('seed').value);
   if (media === 'video') {
     if ($('dur').value) body.duration_s = Number($('dur').value);
@@ -773,6 +980,7 @@ $('preset').addEventListener('change', e => {
   const idx = v.indexOf(PRESET_PLACEHOLDER);
   if (idx >= 0) ta.setSelectionRange(idx, idx + PRESET_PLACEHOLDER.length); // 选中空位，直接输入即可替换
   $('preset').selectedIndex = 0;
+  saveDraft();
 });
 
 // ---------- 提示词优化 ----------
@@ -799,6 +1007,7 @@ function useEnhanced() {
   if (!window._enh) return;
   $('prompt').value = window._enh;
   $('enhancebox').innerHTML = '<div class="infobox">已填入输入框，可直接点“▶ 生成”</div>';
+  saveDraft();
 }
 
 // ---------- 管理员面板（生成/管理一次性激活 Key） ----------
@@ -908,6 +1117,7 @@ async function refreshWorkflows() {
     // 同步 media：模板/风格/批次或秒数始终与（恢复后的）工作流一致
     const w = WORKFLOWS.find(x => x.id === $('wf').value);
     if (w && w.media) setMedia(w.media);
+    syncImageField();
   } catch (e) { $('wf').innerHTML = '<option value="">（加载失败，请重新登录）</option>'; }
 }
 async function refreshHealth() {
@@ -932,9 +1142,14 @@ autoLogin();         // 先过登录门（在线验证），通过后才启动 S
 $('wf').addEventListener('change', e => {
   const w = WORKFLOWS.find(x => x.id === e.target.value);
   if (w && w.media) setMedia(w.media);
+  syncImageField();
   if (e.target.value) localStorage.setItem('cbwf', e.target.value);
 });
 $('prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generate(false); });
+// 草稿自动保存：提示词 / 参数 / 参考图变化即写入 localStorage
+$('prompt').addEventListener('input', () => { showMentions(); saveDraft(); });
+$('seed').addEventListener('input', saveDraft);
+['ar', 'res', 'dur', 'bs'].forEach(id => $(id).addEventListener('change', saveDraft));
 </script>
 </body>
 </html>

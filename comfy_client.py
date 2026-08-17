@@ -37,6 +37,10 @@ class ComfyClient:
     def system_stats(self) -> dict:
         return self._get("/system_stats").json()
 
+    def object_info(self, node_class: str) -> dict:
+        """返回某个节点类的输入/输出 schema（如 ComfyTV.VideoStage 的 workflow 下拉项）。"""
+        return self._get(f"/object_info/{node_class}").json()
+
     def queue_status(self):
         """返回该实例队列的 (running, pending)；不可达时返回 None。
 
@@ -104,6 +108,24 @@ class ComfyClient:
             "/view",
             params={"filename": filename, "subfolder": subfolder, "type": file_type},
         ).content
+
+    def upload_image(self, data: bytes, filename: str, subfolder: str = "",
+                     overwrite: bool = True) -> dict:
+        """上传图片到 ComfyUI 的 input 目录，返回 {"name","subfolder","type"}。
+
+        ComfyUI 的 /upload/image 用 multipart 字段名 "image"，并回传
+        {name, subfolder, type}（type 固定为 "input"）。随后可用
+        /view?filename=name&subfolder=subfolder&type=input 引用该图。
+        """
+        r = self.session.post(
+            self.base + "/upload/image",
+            data={"overwrite": str(overwrite).lower(), "subfolder": subfolder},
+            files={"image": (filename, data)},
+            timeout=self.timeout,
+        )
+        if r.status_code != 200:
+            raise ComfyError(f"上传图片失败 HTTP {r.status_code}: {r.text[:300]}")
+        return r.json()
 
     # ---------- 轮询 ----------
     def wait(self, prompt_id: str, poll_interval: float = 1.0, timeout: float = 900) -> dict:

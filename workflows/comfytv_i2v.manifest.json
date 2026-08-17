@@ -1,0 +1,47 @@
+{
+  "id": "comfytv_i2v",
+  "name": "ComfyTV 图生视频 (R2V)",
+  "media": "video",
+  "description": "MiniMax H3 参考图生视频：按用户上传的图片数量（1~9 张）自动选择对应组，生成带原生音频的视频。提示词中用 @image_1 / @image_2 … 指代第 1/2… 张参考图",
+  "workflow_file": "comfytv_i2v.json",
+  "mention_style": "minimax_tags",
+  "prompt_slots": [
+    {"node": "1", "field": "main_prompt"}
+  ],
+  "aspect_ratio_slots": [
+    {"node": "1", "field": "aspect_ratio"}
+  ],
+  "resolution_slots": [
+    {"node": "1", "field": "resolution"}
+  ],
+  "resolution_map": {
+    "480p": "0.2 (≈448×448)",
+    "720p": "0.5 (≈707×707)",
+    "1080p": "1.0 (≈1024×1024)",
+    "2k": "1.5 (≈1225×1225)",
+    "4k": "2.0 (≈1414×1414)"
+  },
+  "duration_slots": [
+    {"node": "1", "field": "duration_s"}
+  ],
+  "force_run_slots": [
+    {"node": "1", "field": "force_run_token"}
+  ],
+  "image_slots": [
+    {"node": "1", "group": "images", "prefix": "image", "index_base": 0}
+  ],
+  "min_images": 1,
+  "max_images": 9,
+  "image_groups": {
+    "1": {"workflow": "07_R2V-01：多图参考 (1)"},
+    "2": {"workflow": "07_R2V-01：多图参考 (2)"},
+    "3": {"workflow": "07_R2V-01：多图参考 (3)"},
+    "4": {"workflow": "07_R2V-01：多图参考 (4)"},
+    "5": {"workflow": "07_R2V-01：多图参考 (5)"},
+    "6": {"workflow": "07_R2V-01：多图参考 (6)"},
+    "7": {"workflow": "07_R2V-01：多图参考 (7)"},
+    "8": {"workflow": "07_R2V-01：多图参考 (8)"},
+    "9": {"workflow": "07_R2V-01：多图参考 (9)"}
+  },
+  "collect": {"mode": "history"}
+}

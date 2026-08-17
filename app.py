@@ -20,11 +20,13 @@ import json
 import queue
 import time
 import threading
+import urllib.parse
+import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -116,7 +118,7 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; "
+        "default-src 'self'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; "
         "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
         "base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
     )
@@ -220,6 +222,8 @@ class GenerateRequest(BaseModel):
                                    description="批量张数 1-8；留空使用工作流默认值")
     duration_s: int | None = Field(default=None, ge=1, le=60,
                                    description="文生视频时长（秒）；留空使用工作流默认值")
+    images: list[str] = Field(default_factory=list,
+                              description="图生视频的上游图片（/v1/upload 返回的 view_url 列表）")
     dry_run: bool = False
 
 
@@ -252,6 +256,15 @@ def generate(req: GenerateRequest, user=Depends(require_auth)):
     if req.resolution not in workflow_engine.RESOLUTIONS:
         raise HTTPException(422, f"不支持的分辨率: {req.resolution}，可选 {workflow_engine.RESOLUTIONS}")
 
+    images = [str(i).strip() for i in (req.images or []) if i and str(i).strip()]
+    if manifest.get("image_slots"):
+        min_n = int(manifest.get("min_images", 1) or 1)
+        max_n = int(manifest.get("max_images", 0) or 0)
+        if len(images) < min_n:
+            raise HTTPException(422, f"工作流「{manifest.get('name', req.workflow_id)}」需要至少 {min_n} 张图片（当前 {len(images)} 张）")
+        if max_n and len(images) > max_n:
+            raise HTTPException(422, f"工作流「{manifest.get('name', req.workflow_id)}」最多支持 {max_n} 张图片（当前 {len(images)} 张）")
+
     prompt = safety.sanitize(req.prompt, int(cfg.get("max_prompt_len", 4000)))
     verdict = safety.check_prompt(prompt, cfg)
     if not verdict["allowed"]:
@@ -268,7 +281,7 @@ def generate(req: GenerateRequest, user=Depends(require_auth)):
             raise HTTPException(403, "仅管理员可查看工作流 dry-run 结果")
         wf, seed = workflow_engine.build_workflow(
             manifest, prompt, req.aspect_ratio, req.resolution, req.seed,
-            req.batch_size, req.duration_s)
+            req.batch_size, req.duration_s, images)
         return {"dry_run": True, "seed": seed, "workflow": wf}
 
     job = job_manager.create(req.workflow_id, {
@@ -278,9 +291,100 @@ def generate(req: GenerateRequest, user=Depends(require_auth)):
         "seed": req.seed,
         "batch_size": req.batch_size,
         "duration_s": req.duration_s,
+        "images": images,
     }, owner=_owner(user))
     job_manager.submit(job["id"])
     return {"job_id": job["id"], "status": "queued", "poll": f"/v1/jobs/{job['id']}"}
+
+
+_ALLOWED_IMAGE_EXTS = {"png", "jpg", "jpeg", "webp", "bmp"}
+
+
+def _view_url(info: dict) -> str:
+    """由 ComfyUI /upload/image 的返回 {name, subfolder, type} 拼出 ComfyUI 的 /view 地址（生成用）。"""
+    qs = urllib.parse.urlencode({
+        "filename": info.get("name", ""),
+        "subfolder": info.get("subfolder", ""),
+        "type": info.get("type", "input"),
+    })
+    return "/view?" + qs
+
+
+def _preview_url(info: dict) -> str:
+    """拼出经桥代理的同源 /v1/view 地址（网页缩略图用，可跨刷新复用）。"""
+    qs = urllib.parse.urlencode({
+        "filename": info.get("name", ""),
+        "subfolder": info.get("subfolder", ""),
+        "type": info.get("type", "input"),
+    })
+    return "/v1/view?" + qs
+
+
+@app.post("/v1/upload")
+async def upload_images(images: list[UploadFile] = File(...), user=Depends(require_auth)):
+    """把用户上传的图片送到 ComfyUI input 目录，返回可直接写入工作流的 view_url 列表。
+
+    图片按上传顺序编号（写入工作流后对应 image0/image1/…），供图生视频工作流
+    按「图片数量」选择对应的组。
+    """
+    max_n = int(cfg.get("max_upload_images", 9))
+    if not images:
+        raise HTTPException(422, "请至少上传一张图片")
+    if len(images) > max_n:
+        raise HTTPException(422, f"最多上传 {max_n} 张图片")
+    if pool is None or not pool.clients:
+        raise HTTPException(503, "没有可用的 ComfyUI 实例（请确认 ComfyUI 已启动）")
+    client = pool.any()
+    if client is None:
+        raise HTTPException(503, "没有可用的 ComfyUI 实例（请确认 ComfyUI 已启动）")
+
+    out = []
+    for f in images:
+        raw = await f.read()
+        if not raw:
+            raise HTTPException(422, f"图片 {f.filename} 内容为空")
+        if len(raw) > 20 * 1024 * 1024:
+            raise HTTPException(422, f"图片 {f.filename} 超过 20MB")
+        name = Path(f.filename or "image.png").name
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext not in _ALLOWED_IMAGE_EXTS:
+            raise HTTPException(422, f"不支持的图片格式: {f.filename}（支持 png/jpg/jpeg/webp/bmp）")
+        unique_name = f"cb_{uuid.uuid4().hex[:10]}_{name}"
+        info = client.upload_image(raw, unique_name)
+        info.setdefault("subfolder", "")
+        info.setdefault("type", "input")
+        out.append({
+            "filename": info.get("name", unique_name),
+            "subfolder": info.get("subfolder", ""),
+            "type": info.get("type", "input"),
+            "view_url": _view_url(info),
+            "preview_url": _preview_url(info),
+        })
+    return {"images": out}
+
+
+@app.get("/v1/view")
+def proxy_comfy_view(filename: str, subfolder: str = "", type: str = "output",
+                     _=Depends(require_auth)):
+    """同源代理 ComfyUI 的 /view 文件（网页端缩略图预览用，避免跨域/CSP 问题）。"""
+    name = Path(filename).name  # 防路径穿越
+    if not name:
+        raise HTTPException(404, "文件不存在")
+    if pool is None or not pool.clients:
+        raise HTTPException(503, "没有可用的 ComfyUI 实例")
+    client = pool.any()
+    try:
+        data = client.view(name, subfolder, type)
+    except Exception:
+        raise HTTPException(404, "文件不存在")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    media = {
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "webp": "image/webp", "bmp": "image/bmp", "gif": "image/gif",
+        "mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
+    }.get(ext, "application/octet-stream")
+    return Response(content=data, media_type=media,
+                    headers={"Cache-Control": "no-store, private"})
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -314,6 +418,31 @@ def get_file(job_id: str, filename: str, user=Depends(require_auth)):
 @app.get("/v1/workflows")
 def list_workflows(_=Depends(require_auth)):
     return workflow_engine.list_workflows()
+
+
+@app.get("/v1/workflows/video-backends")
+def list_video_backends(_=Depends(require_auth)):
+    """列出 ComfyTV.VideoStage 的 workflow 下拉可选值（用于核对图生视频的后端标签）。"""
+    if pool is None or not pool.clients:
+        raise HTTPException(503, "没有可用的 ComfyUI 实例")
+    client = pool.any()
+    if client is None:
+        raise HTTPException(503, "没有可用的 ComfyUI 实例")
+    try:
+        info = client.object_info("ComfyTV.VideoStage")
+    except Exception as e:
+        raise HTTPException(502, f"获取 VideoStage 节点信息失败: {e}")
+    node = (info or {}).get("ComfyTV.VideoStage") or {}
+    inputs = (node.get("input") or {}).get("required") or {}
+    spec = inputs.get("workflow")
+    options = []
+    if isinstance(spec, (list, tuple)) and spec:
+        first = spec[0]
+        if isinstance(first, (list, tuple)):
+            options = [str(x) for x in first]
+        elif isinstance(first, dict):
+            options = [str(k) for k in first.keys()]
+    return {"workflow_options": options, "count": len(options), "raw": spec}
 
 
 @app.get("/v1/health")

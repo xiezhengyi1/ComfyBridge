@@ -31,10 +31,13 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/v1/generate` | 提交生成任务 |
+| POST | `/v1/upload` | 上传图生视频的参考图片（multipart，字段 `images`，返回 `view_url` 生成引用 + `preview_url` 缩略图） |
+| GET | `/v1/view` | 同源代理 ComfyUI 的 `/view` 文件（网页缩略图预览用，参数 `filename/subfolder/type`） |
 | GET | `/v1/jobs/{id}` | 查询任务状态与结果文件（仅本人可见） |
 | GET | `/v1/jobs?limit=N` | 最近任务列表（仅本人可见） |
 | GET | `/v1/files/{job_id}/{file}` | 下载生成的图片/视频（需鉴权+归属校验） |
 | GET | `/v1/workflows` | 可用工作流列表 |
+| GET | `/v1/workflows/video-backends` | 列出 ComfyTV.VideoStage 的 workflow 下拉可选值（核对图生视频后端标签） |
 | GET | `/v1/health` | 检查与 ComfyUI 的连通性 |
 | GET | `/v1/events` | SSE 实时流：任务状态/采样进度/预览（仅本人任务） |
 | POST | `/v1/enhance` | 提示词优化（规则增强，可选 LLM 智能改写） |
@@ -116,6 +119,16 @@ curl -X POST http://127.0.0.1:8000/v1/generate \
 
 # 查询（完成后 files 里是下载好的图片链接）
 curl -H "Authorization: Bearer <key>" http://127.0.0.1:8000/v1/jobs/abc123...
+
+# 图生视频：先上传参考图（可多张），再按返回的 view_url 生成
+curl -X POST http://127.0.0.1:8000/v1/upload \
+  -H "Authorization: Bearer <key>" \
+  -F "images=@首帧.png" -F "images=@尾帧.png"
+# -> {"images":[{"view_url":"/view?filename=...&type=input"}, ...]}
+
+curl -X POST http://127.0.0.1:8000/v1/generate \
+  -H "Authorization: Bearer <key>" -H "Content-Type: application/json" \
+  -d '{"workflow_id":"comfytv_i2v","prompt":"镜头缓慢推近，@image_1 的女孩转身微笑，@image_2 作为结尾","aspect_ratio":"9:16","resolution":"1080p","duration_s":5,"images":["/view?filename=...&type=input","/view?filename=...&type=input"]}'
 ```
 
 请求参数：
@@ -125,9 +138,10 @@ curl -H "Authorization: Bearer <key>" http://127.0.0.1:8000/v1/jobs/abc123...
 | `workflow_id` | ✅ | 工作流 ID（`GET /v1/workflows` 查看） |
 | `prompt` | ✅ | 提示词（超长自动截断） |
 | `aspect_ratio` | | `1:1 / 4:3 / 3:4 / 16:9 / 9:16 / 21:9 / 3:2 / 2:3` |
-| `resolution` | | `720p / 1080p / 2k / 4k` |
+| `resolution` | | `480p / 720p / 1080p / 2k / 4k` |
 | `seed` | | 留空自动随机 |
 | `batch_size` | | 批量张数 1-8；留空使用工作流默认值（ComfyTV 文生图默认 3 张） |
+| `images` | | 图生视频的参考图片列表（`/v1/upload` 返回的 `view_url`）。工作流按图片数量自动选择对应组 |
 | `dry_run` | | `true` 只返回注入后的工作流 JSON，不运行 |
 
 ## 安全设计

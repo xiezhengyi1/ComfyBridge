@@ -70,8 +70,9 @@ DEFAULTS = {
         "http://127.0.0.1:8000",
     ],
 
-    # 限流：每个 Key 每分钟最多请求数
-    "rate_limit_per_minute": 10,
+    # 限流：每个 Key 每分钟最多请求数（网页端健康检查/工作流刷新/SSE 兜底轮询 + 上传/生成会叠加，
+    # 过小会把正常操作误判为“请求过于频繁”，故默认放宽到 60）
+    "rate_limit_per_minute": 60,
     "login_rate_limit_per_minute": 5,       # 未认证登录尝试：按源 IP 限流
     "sse_connection_limit_per_user": 3,     # 每用户最多同时保持的 SSE 连接数
     "sse_connection_rate_per_minute": 5,    # 每用户每分钟新建 SSE 数
@@ -85,6 +86,9 @@ DEFAULTS = {
 
     # 提示词限制
     "max_prompt_len": 4000,
+
+    # 图生视频等：单次最多上传的图片数
+    "max_upload_images": 9,
 
     # 可选：提示词智能优化用的 LLM（OpenAI 兼容接口，如 DeepSeek/通义/OpenAI）
     # 留空 api_key 时 /v1/enhance 仅使用内置规则增强
