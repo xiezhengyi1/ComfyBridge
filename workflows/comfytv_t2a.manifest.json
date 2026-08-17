@@ -1,0 +1,14 @@
+{
+  "id": "comfytv_t2a",
+  "name": "ComfyTV 文生音频 (T2A)",
+  "media": "audio",
+  "description": "调用远端 ComfyTV 的 T2A 工作流。提示词经 main_prompt 正确绑定到 T2A 的用户输入节点；当前服务端输出时长固定为约 30 秒。",
+  "workflow_file": "comfytv_t2a.json",
+  "prompt_slots": [
+    {"node": "1", "field": "main_prompt"}
+  ],
+  "force_run_slots": [
+    {"node": "1", "field": "force_run_token"}
+  ],
+  "collect": {"mode": "history"}
+}

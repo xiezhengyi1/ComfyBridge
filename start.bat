@@ -28,7 +28,10 @@ if errorlevel 1 (
 
 :start
 if exist ".vendor\fastapi" set "PYTHONPATH=%CD%\.vendor"
+REM Local HTTP only: production must keep the default Secure cookie enabled over HTTPS.
+set "COMFYBRIDGE_COOKIE_SECURE=false"
 echo [ComfyBridge] Starting server at http://127.0.0.1:8000
-echo [ComfyBridge] API key is printed on first run (also in config.json)
+echo [ComfyBridge] Local-only HTTP mode: Secure browser cookie is disabled.
+echo [ComfyBridge] Admin key is never printed; configure it in config.json or environment.
 python -m uvicorn app:app --host 127.0.0.1 --port 8000
 pause

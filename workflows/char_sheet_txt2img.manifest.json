@@ -1,0 +1,23 @@
+{
+  "id": "char_sheet_txt2img",
+  "name": "角色设计一图流 (Z-Image, 16:9)",
+  "media": "image",
+  "description": "Z-Image-Turbo 16:9 角色设计一图流：左正面 / 中四分之三侧面 / 右背面全身 + 底部表情·细节·配色板；提示词建议选网页端「角色设计」结构模板",
+  "workflow_file": "char_sheet_txt2img.json",
+  "prompt_slots": [
+    {"node": "3", "field": "prompt"}
+  ],
+  "size_slots": [
+    {"node": "4", "width_field": "width", "height_field": "height"}
+  ],
+  "seed_slots": [
+    {"node": "5", "field": "seed"}
+  ],
+  "batch_size_slots": [
+    {"node": "4", "field": "batch_size"}
+  ],
+  "filename_slots": [
+    {"node": "9", "field": "filename_prefix"}
+  ],
+  "collect": {"mode": "history"}
+}

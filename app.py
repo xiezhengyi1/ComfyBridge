@@ -11,19 +11,20 @@
 - 激活 Key：每个 Key 只能用一次 —— 第一次携带它请求任意 /v1 接口时在线校验并激活，
   绑定为当前用户的个人身份 Key；此后该 Key 继续可用，但不能被第二个人激活。
 - 用户数据隔离：每个用户只能看到自己的任务、文件与 SSE 实时流。
-- 鉴权方式：Authorization: Bearer <key> 或 X-API-Key: <key>；
-  浏览器场景（SSE/图片/下载无法带自定义头）用查询参数: /v1/events?key=<key>、
-  /v1/files/...?key=<key>。
+- 脚本鉴权：Authorization: Bearer <key> 或 X-API-Key: <key>。
+- 浏览器鉴权：登录时将 Key 交换为短期 HttpOnly/Secure/SameSite Cookie，
+  绝不在 URL、localStorage 或前端代码中保存 Key。
 """
 import asyncio
 import json
 import queue
 import time
+import threading
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -39,6 +40,7 @@ from key_registry import KeyRegistry
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CLIENT_ID = "comfybridge"
+SESSION_COOKIE = "cb_session"
 cfg = cfg_mod.load_config()
 
 client = None
@@ -50,16 +52,15 @@ registry = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client, listener, job_manager, registry
-    key = cfg_mod.bootstrap(cfg)
+    cfg_mod.bootstrap(cfg)
     registry = KeyRegistry(BASE_DIR / "storage", cfg)
-    if key:
-        print("\n" + "=" * 60)
-        print("  ComfyBridge 管理员 API Key: " + key)
-        print("  管理员可调用 POST /v1/admin/keys 批量生成一次性激活 Key")
-        print("  普通用户拿到激活 Key 后，首次请求任意 /v1 接口即自动激活绑定")
-        print("  所有 /v1 请求请携带 Authorization: Bearer <key>")
-        print("  网页端在页面里输入同一个 Key 即可")
-        print("=" * 60 + "\n")
+    if not cfg.get("auth_disabled"):
+        keyfile = BASE_DIR / "admin-key.txt"
+        if keyfile.exists():
+            print(f"[ComfyBridge] 鉴权已启用；管理员 Key 明文见 {keyfile}（config.json 仅存 HMAC 摘要）")
+        else:
+            print("[ComfyBridge] 警告：config.json 的 api_keys 只有 hmac$ 摘要但找不到 admin-key.txt；"
+                  "请用 COMFYBRIDGE_API_KEY 环境变量注入明文管理员 Key，或清空 api_keys 让服务重新生成。")
     client = ComfyClient(cfg["comfyui_base_url"])
     job_manager = JobManager(client, BASE_DIR / "storage", cfg,
                              default_owner=registry.admin_owner_id())
@@ -76,29 +77,59 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cfg.get("cors_origins", []),
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+    allow_credentials=False,
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Prevent authenticated API responses from being retained by browsers/proxies."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+        "base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+    )
+    if request.url.path.startswith("/v1/"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 # ---------------- 鉴权 & 限流 ----------------
 _rate = defaultdict(deque)
+_login_rate = defaultdict(deque)
+_sse_counts = defaultdict(int)
+_rate_lock = threading.Lock()
+_sse_lock = threading.Lock()
 
 
-def _extract_key(request: Request, query_key: str = "") -> str:
-    """从请求中取出 Key：Authorization: Bearer > X-API-Key > ?key= 查询参数。"""
+def _extract_key(request: Request) -> str:
+    """只接受请求头中的 Key；禁止把长期凭据放进 URL、日志或 Referrer。"""
+    if "key" in request.query_params:
+        raise HTTPException(400, "不支持在 URL 查询参数中传递 API Key，请使用会话 Cookie 或 Authorization 请求头")
     header = request.headers.get("Authorization", "")
     key = header.removeprefix("Bearer ").strip() if header.startswith("Bearer") else ""
     if not key:
         key = request.headers.get("X-API-Key", "").strip()
-    if not key:
-        key = (query_key or request.query_params.get("key", "") or "").strip()
     return key
 
 
-def _resolve(request: Request, query_key: str = "") -> dict | None:
-    """在线校验 Key 并解析为用户记录；激活 Key 首次使用自动激活绑定（每个 Key 只能用一次）。"""
+def _resolve(request: Request) -> dict | None:
+    """优先使用短期 HttpOnly 会话，其次支持受限的命令行 Bearer Key。"""
     if cfg.get("auth_disabled"):
         return None
-    key = _extract_key(request, query_key)
+    # 即使 Cookie 已有效，也拒绝 URL Key，避免调用方误以为该方式仍受支持。
+    key = _extract_key(request)
+    session = request.cookies.get(SESSION_COOKIE, "")
+    if session:
+        user = registry.resolve_session(session)
+        if user is not None:
+            return user
     if not key:
         raise HTTPException(401, "缺失 API Key")
     user = registry.resolve_user(key)
@@ -111,15 +142,34 @@ def require_auth(request: Request):
     user = _resolve(request)
     if user is None:
         return None  # auth_disabled：不做用户隔离
-    key = _extract_key(request)
+    identity = user["user_id"]
     now = time.time()
-    q = _rate[key]
-    while q and now - q[0] > 60:
-        q.popleft()
-    if len(q) >= int(cfg.get("rate_limit_per_minute", 10)):
-        raise HTTPException(429, "请求过于频繁，请稍后再试")
-    q.append(now)
+    with _rate_lock:
+        q = _rate[identity]
+        while q and now - q[0] > 60:
+            q.popleft()
+        if len(q) >= int(cfg.get("rate_limit_per_minute", 10)):
+            raise HTTPException(429, "请求过于频繁，请稍后再试")
+        q.append(now)
     return user
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _require_login_rate(request: Request) -> None:
+    """Limit unauthenticated login attempts by direct peer address."""
+    now = time.time()
+    ip = _client_ip(request)
+    limit = int(cfg.get("login_rate_limit_per_minute", 5))
+    with _rate_lock:
+        q = _login_rate[ip]
+        while q and now - q[0] > 60:
+            q.popleft()
+        if len(q) >= limit:
+            raise HTTPException(429, "登录尝试过于频繁，请稍后再试")
+        q.append(now)
 
 
 def require_admin(request: Request):
@@ -189,6 +239,8 @@ def generate(req: GenerateRequest, user=Depends(require_auth)):
     _llm_moderation_check(prompt)
 
     if req.dry_run:
+        if user is not None and user.get("role") != "admin":
+            raise HTTPException(403, "仅管理员可查看工作流 dry-run 结果")
         wf, seed = workflow_engine.build_workflow(
             manifest, prompt, req.aspect_ratio, req.resolution, req.seed,
             req.batch_size, req.duration_s)
@@ -221,7 +273,7 @@ def list_jobs(limit: int = 100, user=Depends(require_auth)):
 
 @app.get("/v1/files/{job_id}/{filename}")
 def get_file(job_id: str, filename: str, user=Depends(require_auth)):
-    """下载任务产物。已加鉴权与归属校验：只允许任务归属者访问（浏览器用 ?key= 传参）。"""
+    """下载任务产物。只允许任务归属者访问，浏览器通过同源 HttpOnly Cookie 鉴权。"""
     job = job_manager.get(job_id)
     if job is None:
         raise HTTPException(404, "文件不存在")
@@ -249,10 +301,9 @@ def health(_=Depends(require_auth)):
             "version": app.version,
             "comfyui_version": sys.get("comfyui_version"),
             "ram_free_gb": round(sys.get("ram_free", 0) / 1024**3, 1),
-            "connected_to": cfg["comfyui_base_url"],
         }
-    except Exception as e:
-        return {"ok": False, "version": app.version, "error": str(e)}
+    except Exception:
+        return {"ok": False, "version": app.version}
 
 
 class EnhanceRequest(BaseModel):
@@ -304,39 +355,92 @@ def enhance_prompt(req: EnhanceRequest, _=Depends(require_auth)):
             "style_name": prompt_enhance.get_style_name(req.style, req.media), "engine": engine}
 
 
-# ---------------- 鉴权辅助：Key 在线验证 ----------------
-class VerifyRequest(BaseModel):
-    key: str = Field(min_length=1)
+# ---------------- Browser login: API Key -> short-lived HttpOnly session ----------------
+class LoginRequest(BaseModel):
+    key: str = Field(min_length=16, max_length=512)
 
 
-@app.post("/v1/auth/verify")
-def verify_key(req: VerifyRequest):
-    """在线验证一个 Key 的状态（不消费）：unknown/未使用/已激活/已吊销/管理员。"""
-    return registry.verify(req.key)
+def _session_view(user: dict) -> dict:
+    return {
+        "authenticated": True,
+        "user_id": user["user_id"],
+        "role": user.get("role"),
+        "key_expires_at": user.get("key_expires_at"),
+    }
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    max_age = max(1, min(int(cfg.get("session_ttl_hours", 12)), 24 * 7)) * 3600
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=bool(cfg.get("session_cookie_secure", True)),
+        samesite="strict",
+        path="/",
+    )
+
+
+@app.post("/v1/auth/login")
+def login(req: LoginRequest, request: Request, response: Response):
+    """Exchange a Key for a short-lived, same-origin HttpOnly session cookie."""
+    if cfg.get("auth_disabled"):
+        raise HTTPException(404, "当前服务未启用鉴权")
+    _require_login_rate(request)
+    user = registry.resolve_user(req.key)
+    if user is None:
+        registry.audit_login_failure(client_ip=_client_ip(request))
+        raise HTTPException(401, "登录凭据无效、已过期或已被吊销")
+    token, _ = registry.create_session(user, client_ip=_client_ip(request))
+    _set_session_cookie(response, token)
+    return _session_view(user)
+
+
+@app.get("/v1/auth/session")
+def session_status(user=Depends(require_auth)):
+    """Return the current authenticated identity without exposing any credential."""
+    if user is None:
+        return {"authenticated": False}
+    return _session_view(user)
+
+
+@app.post("/v1/auth/logout")
+def logout(request: Request, response: Response, user=Depends(require_auth)):
+    registry.revoke_session(request.cookies.get(SESSION_COOKIE, ""), actor=_owner(user))
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
 
 
 # ---------------- 管理员接口：激活 Key 生成与管理 ----------------
 class GenerateKeysRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=100, description="一次生成的数量 1-100")
     note: str = Field(default="", description="备注（如客户名/用途），可选")
+    expires_in_hours: int | None = Field(default=None, ge=1, le=2160,
+                                          description="激活码有效期（小时），默认使用配置")
 
 
 @app.post("/v1/admin/keys")
 def admin_generate_keys(req: GenerateKeysRequest, user=Depends(require_admin)):
-    """批量生成一次性激活 Key（每个 Key 首次请求自动激活并绑定一个用户）。"""
-    return {"keys": registry.generate_keys(req.count, req.note.strip())}
+    """批量生成一次性激活 Key；原始 Key 只在本次响应中返回一次。"""
+    return {"keys": registry.generate_keys(
+        req.count, req.note.strip(), req.expires_in_hours, actor=user["user_id"])}
 
 
 @app.get("/v1/admin/keys")
 def admin_list_keys(user=Depends(require_admin)):
-    """已发放激活 Key 列表（含状态/绑定用户/备注）。"""
+    """已发放 Key 的元数据；历史明文 Key 永不回显。"""
     return {"keys": registry.list_keys()}
 
 
-@app.post("/v1/admin/keys/{key}/revoke")
-def admin_revoke_key(key: str, user=Depends(require_admin)):
-    """吊销激活 Key；若已绑定用户则一并停用该用户。"""
-    rec = registry.revoke_key(key)
+class RevokeKeyRequest(BaseModel):
+    key_id: str = Field(min_length=8, max_length=128)
+
+
+@app.post("/v1/admin/keys/revoke")
+def admin_revoke_key(req: RevokeKeyRequest, user=Depends(require_admin)):
+    """按非敏感的 Key 记录 ID 吊销；已绑定用户会同时停用。"""
+    rec = registry.revoke_key(req.key_id, actor=user["user_id"])
     if rec is None:
         raise HTTPException(404, "Key 不存在")
     return {"revoked": rec}
@@ -358,23 +462,50 @@ def admin_set_user_status(user_id: str, req: SetUserStatusRequest,
     """启用/停用某个用户（停用后其 Key 全部失效）。"""
     if req.status not in ("active", "disabled"):
         raise HTTPException(422, "status 只能是 active / disabled")
-    rec = registry.set_user_status(user_id, req.status)
+    rec = registry.set_user_status(user_id, req.status, actor=user["user_id"])
     if rec is None:
         raise HTTPException(404, "用户不存在")
     return {"user": rec}
 
 
+class RotateUserKeyRequest(BaseModel):
+    expires_in_hours: int | None = Field(default=None, ge=1, le=8760)
+
+
+@app.post("/v1/admin/users/{user_id}/keys/rotate")
+def admin_rotate_user_key(user_id: str, req: RotateUserKeyRequest,
+                          user=Depends(require_admin)):
+    """轮换用户 API Key，并使其所有现有浏览器会话立即失效。"""
+    rec = registry.rotate_user_key(user_id, expires_in_hours=req.expires_in_hours,
+                                   actor=user["user_id"])
+    if rec is None:
+        raise HTTPException(404, "普通用户不存在")
+    return {"key": rec}
+
+
 # ---------------- SSE 实时事件流 ----------------
 @app.get("/v1/events")
-async def events(request: Request, key: str = ""):
-    """实时推送任务状态/进度/预览。EventSource 不支持自定义头，用 ?key= 传 API Key。
-    只推送当前用户自己的任务（用户数据隔离）。"""
-    user = _resolve(request, key)
-    q = job_manager.subscribe(owner=_owner(user))
+async def events(request: Request, user=Depends(require_auth)):
+    """实时推送当前会话用户的任务；认证完全由 HttpOnly Cookie 或请求头完成。"""
+    owner = _owner(user)
+    identity = owner or "auth_disabled"
+    now = time.time()
+    with _rate_lock:
+        q_rate = _rate[f"sse:{identity}"]
+        while q_rate and now - q_rate[0] > 60:
+            q_rate.popleft()
+        if len(q_rate) >= int(cfg.get("sse_connection_rate_per_minute", 5)):
+            raise HTTPException(429, "实时连接创建过于频繁，请稍后再试")
+        q_rate.append(now)
+    with _sse_lock:
+        if _sse_counts[identity] >= int(cfg.get("sse_connection_limit_per_user", 3)):
+            raise HTTPException(429, "实时连接数已达上限")
+        _sse_counts[identity] += 1
+    q = job_manager.subscribe(owner=owner)
 
     async def gen():
         try:
-            snap = {"type": "snapshot", "jobs": job_manager.list(100, owner=_owner(user))}
+            snap = {"type": "snapshot", "jobs": job_manager.list(100, owner=owner)}
             yield "data: " + json.dumps(snap, ensure_ascii=False) + "\n\n"
             while True:
                 if await request.is_disconnected():
@@ -388,11 +519,13 @@ async def events(request: Request, key: str = ""):
                 yield "data: " + json.dumps(msg, ensure_ascii=False) + "\n\n"
         finally:
             job_manager.unsubscribe(q)
+            with _sse_lock:
+                _sse_counts[identity] = max(0, _sse_counts[identity] - 1)
 
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-store, private", "X-Accel-Buffering": "no"},
     )
 
 

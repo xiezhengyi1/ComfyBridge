@@ -1,7 +1,9 @@
 # ===== 密钥与本地配置（严禁入库）=====
-# config.json 含 DeepSeek API Key 与桥 API Key，绝不提交。
+# config.json 含 DeepSeek API Key 与桥 Key 的 HMAC 摘要，绝不提交。
+# admin-key.txt 存管理员 API Key 明文，绝不提交。
 # 部署请用环境变量 COMFYBRIDGE_API_KEY / COMFYBRIDGE_COMFYUI_URL，或本地重建 config.json。
 config.json
+admin-key.txt
 
 # ===== 运行时数据 =====
 storage/

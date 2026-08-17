@@ -26,8 +26,9 @@ export COMFYBRIDGE_COMFYUI_URL="http://127.0.0.1:8188"   # 同机直连 ComfyUI
 export COMFYBRIDGE_HOST="0.0.0.0"
 export COMFYBRIDGE_PORT="$BRIDGE_PORT"
 export COMFYBRIDGE_CORS_ORIGINS="$PUBLIC_BASE_URL"       # 公网来源允许跨域调用
-# 强烈建议显式设置 API Key（否则启动时自动生成并打印到日志）
+# 生产环境必须显式设置管理员 Key 与 HMAC Pepper（绝不从日志读取密钥）
 # export COMFYBRIDGE_API_KEY="换成你的桥Key"
+# export COMFYBRIDGE_KEY_HASH_SECRET="用密码管理器生成的高熵随机值"
 
 # 停掉可能存在的旧实例（只匹配桥，不影响 ComfyUI）
 pkill -f "uvicorn app:app" 2>/dev/null || true
@@ -43,6 +44,6 @@ echo "  （用户打开此网址会先看到 API Key 登录门，验证通过后
 echo "  健康检查:"
 echo "    curl -H 'Authorization: Bearer <你的Key>' \\"
 echo "      $PUBLIC_BASE_URL/v1/health"
-echo "  API Key: 查看 bridge.log 顶部，或通过环境变量 COMFYBRIDGE_API_KEY 显式设置"
+echo "  API Key: 仅通过环境变量或私有 config.json 配置，绝不会输出到日志"
 echo "  日志: tail -f bridge.log"
 tail -3 bridge.log || true

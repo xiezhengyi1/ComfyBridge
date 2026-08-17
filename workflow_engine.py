@@ -122,6 +122,10 @@ def build_workflow(manifest: dict, prompt: str, aspect_ratio: str = "1:1",
             set_field(s["node"], s["height_field"], h)
     for s in manifest.get("seed_slots", []):
         set_field(s["node"], s["field"], seed)
+    # ComfyTV 的 Stage 使用 force_run_token 标识一次新的用户触发。若一直为固定值，
+    # ComfyUI 可能复用节点缓存而不重新执行内部工作流。
+    for s in manifest.get("force_run_slots", []):
+        set_field(s["node"], s["field"], seed)
     if batch_size is not None and manifest.get("batch_size_slots"):
         for s in manifest["batch_size_slots"]:
             set_field(s["node"], s["field"], batch_size)

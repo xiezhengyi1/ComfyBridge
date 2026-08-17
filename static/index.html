@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ComfyBridge · 文生图工作台</title>
+<title>ComfyBridge · 创作工作台</title>
 <style>
 :root{
   --bg:#f2f4f8; --card:#ffffff; --border:#dde3ec; --text:#1f2937; --muted:#6b7280;
@@ -11,8 +11,9 @@
   --ok:#16a34a; --err:#dc2626; --warn:#d97706; --info:#0891b2;
 }
 *{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
 body{margin:0;font-family:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-  background:var(--bg);color:var(--text);font-size:14px}
+  background:var(--bg);color:var(--text);font-size:14px;min-width:320px}
 header{display:flex;align-items:center;gap:14px;padding:10px 20px;background:var(--card);
   border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
 .logo{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
@@ -20,7 +21,6 @@ header{display:flex;align-items:center;gap:14px;padding:10px 20px;background:var
 .logo .dot.on{background:var(--ok)} .logo .dot.off{background:var(--err)}
 header .spacer{flex:1}
 header label{color:var(--muted);font-size:13px}
-#apikey{width:300px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px}
 .keybadge{font-size:12px;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis}
 /* 登录门：进入工作台前必须通过在线验证 */
 #gate{position:fixed;inset:0;z-index:200;background:linear-gradient(160deg,#0f172a 0%,#1e3a5f 60%,#0f2a43 100%);
@@ -117,7 +117,7 @@ select,input[type=text]{padding:8px 10px;border:1px solid var(--border);border-r
 /* 画廊 */
 .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px}
 .fcard{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff}
-.fcard img,.fcard video{width:100%;display:block;background:#f1f5f9}
+.fcard img,.fcard video,.fcard audio{width:100%;display:block;background:#f1f5f9}
 .fcard .fmeta{padding:8px 10px;font-size:12px;color:var(--muted)}
 .fcard .fname{font-family:Consolas,monospace;word-break:break-all}
 .fcard .frow{display:flex;align-items:center;gap:8px;margin-top:5px}
@@ -145,6 +145,59 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
 .modal p{margin:0 0 20px;font-size:14px;color:#6b7280;line-height:1.8}
 @keyframes fadein{from{opacity:0}to{opacity:1}}
 @keyframes pop{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
+/* ---------- 自适应布局 ---------- */
+@media (max-width:1024px){
+  main{padding:14px 16px}
+  .workspace{gap:14px}
+  .history{width:264px}
+  .gallery{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+}
+@media (max-width:800px){
+  header{padding:10px 14px;gap:9px;flex-wrap:wrap}
+  header .spacer{display:none}
+  .logo{margin-right:auto}
+  #wsstatus{order:3;flex-basis:100%}
+  main{padding:12px}
+  .workspace{flex-direction:column;margin-top:12px}
+  .history,.stage{width:100%;max-height:none;position:static}
+  #joblist{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+  .jobitem{margin:0}
+  .stage{min-height:360px}
+  .gallery{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+}
+@media (max-width:560px){
+  body{font-size:13px}
+  header{padding:9px 12px}
+  .logo{font-size:16px}
+  .keybadge{max-width:130px}
+  #srvver{display:none}
+  main{padding:10px}
+  .card{padding:12px;border-radius:10px}
+  .gate-card{padding:26px 22px}
+  .ctl-row{gap:8px;align-items:stretch}
+  .ctl-row .field{flex:1 1 calc(50% - 4px);min-width:0!important}
+  .ctl-row .field select,.ctl-row .field input{width:100%}
+  .ctl-row>.btn{flex:1 1 calc(50% - 4px);padding:10px 12px}
+  .composer textarea{height:118px}
+  #joblist{display:block}
+  .jobitem{margin-bottom:8px}
+  .pipeline{overflow-x:auto;gap:2px;padding-bottom:4px}
+  .step{flex:0 0 82px;min-width:82px}
+  .step .sub{font-size:10px;max-width:78px}
+  .step .line{width:calc(100% - 30px);left:calc(50% + 15px)}
+  .viz{padding:16px 12px}
+  .viz .viz-pct{font-size:38px}
+  .live{min-height:132px}
+  .gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .fcard .fmeta{padding:7px 8px}
+  .modal{padding:22px 18px}
+  #adminbody{font-size:11px}
+}
+@media (max-width:360px){
+  .ctl-row .field,.ctl-row>.btn{flex-basis:100%}
+  .gallery{grid-template-columns:1fr}
+  #logoutbtn{margin-left:auto}
+}
 </style>
 </head>
 <body>
@@ -157,7 +210,7 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
     <input id="gatekey" type="password" placeholder="粘贴 API Key" autocomplete="off">
     <button class="btn" id="gatebtn">🔓 验证并进入</button>
     <div id="gateerr"></div>
-    <p class="gate-tip">每个 Key 首次使用自动激活绑定；<br>验证通过后将自动进入工作台。</p>
+  <p class="gate-tip">Key 只用于本次登录；验证后浏览器仅保存短期安全会话。<br>请勿在聊天、截图或 URL 中分享 Key。</p>
   </div>
 </div>
 <header>
@@ -165,9 +218,7 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
   <span id="wsstatus" style="font-size:12px;color:#9ca3af">未连接</span>
   <span id="srvver" style="font-size:11px;color:#9ca3af"></span>
   <div class="spacer"></div>
-  <label>API Key</label>
-  <input id="apikey" placeholder="粘贴 API Key（自动保存）" autocomplete="off">
-  <span id="keystatus" class="keybadge"></span>
+  <span id="sessionstatus" class="keybadge"></span>
   <button class="btn ghost" id="adminbtn" style="display:none;padding:7px 12px;font-size:12px" title="生成与管理一次性激活 Key">🔑 管理</button>
   <button class="btn ghost" id="logoutbtn" style="padding:7px 12px;font-size:12px" title="退出并返回登录门">退出</button>
 </header>
@@ -179,16 +230,16 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
       <div class="field" style="flex:1;min-width:280px"><span>🎯 工作流（决定模板 / 风格 / 批次或秒数）</span><select id="wf"></select></div>
     </div>
     <div class="ctl-row">
-      <div class="field"><span>宽高比</span>
+      <div class="field" id="arfield"><span>宽高比</span>
         <select id="ar">
           <option>1:1</option><option>4:3</option><option>3:4</option><option>16:9</option>
           <option selected>9:16</option><option>21:9</option><option>3:2</option><option>2:3</option>
         </select>
       </div>
-      <div class="field"><span>分辨率</span>
+      <div class="field" id="resfield"><span>分辨率</span>
         <select id="res"><option>720p</option><option selected>1080p</option><option>2k</option><option>4k</option></select>
       </div>
-      <div class="field">
+      <div class="field" id="countfield">
         <span id="countlabel">批量张数</span>
         <select id="bs">
           <option value="">默认(3)</option>
@@ -204,16 +255,17 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
           <option value="13">13 秒</option><option value="14">14 秒</option><option value="15">15 秒</option>
         </select>
       </div>
-      <div class="field"><span>种子（留空随机）</span><input id="seed" type="text" placeholder="随机"></div>
+      <div class="field" id="seedfield"><span>种子（留空随机）</span><input id="seed" type="text" placeholder="随机"></div>
       <button class="btn" id="go">▶ 生成</button>
-      <button class="btn ghost" id="dry">预览注入 (dry-run)</button>
+      <button class="btn ghost" id="dry" style="display:none">预览注入 (dry-run)</button>
     </div>
     <textarea id="prompt" placeholder="输入提示词，例如：年轻女孩在雨夜城市街道上撑着透明雨伞回头微笑，电影感，霓虹灯光，胶片质感"></textarea>
+    <div class="infobox" id="audiohint" style="display:none">🎵 T2A 会把这里的文本作为音频生成提示词传入其用户输入节点。当前远端 T2A 工作流的时长为约 30 秒。</div>
     <div class="ctl-row">
-      <div class="field" style="flex:1;min-width:320px"><span>📌 结构模板（选中后替换【主体内容】空位）</span>
+      <div class="field" id="presetfield" style="flex:1;min-width:320px"><span>📌 结构模板（选中后替换【主体内容】空位）</span>
         <select id="preset"><option value="">选择模板…</option></select>
       </div>
-      <div class="field"><span>优化风格</span>
+      <div class="field" id="stylefield"><span>优化风格</span>
         <select id="style"></select>
       </div>
       <button class="btn ghost" id="enh" title="把简单描述扩写成完整提示词">✨ 优化提示词</button>
@@ -304,49 +356,30 @@ let activeId = null;        // 当前选中任务
 let ES = null;              // EventSource
 let fallbackTimer = null;
 let liveTs = 0;
+let session = null;
 
 // ---------- 基础 ----------
-const key = () => ($('apikey').value || '').trim();
-$('apikey').value = localStorage.getItem('cbkey') || '';
-$('apikey').addEventListener('change', () => {
-  localStorage.setItem('cbkey', key());
-  verifyKey();
-  connectSSE();
-  refreshWorkflows();   // 填 Key 后立即拉取工作流列表
-  refreshHealth();
-});
-$('apikey').addEventListener('input', () => localStorage.setItem('cbkey', key()));
-
-// ---------- Key 在线验证（不消耗；激活 Key 首次请求业务接口时才会自动激活绑定） ----------
-async function verifyKey() {
-  const k = key();
-  const el = $('keystatus');
-  const adminBtn = $('adminbtn');
-  if (!k) { el.textContent = ''; adminBtn.style.display = 'none'; return; }
-  el.textContent = '校验中…'; el.style.color = 'var(--muted)';
-  try {
-    const r = await fetch('/v1/auth/verify', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: k })
-    }).then(r => r.json());
-    if (!r.valid) { el.textContent = '✗ ' + (r.message || '无效 Key'); el.style.color = 'var(--err)'; }
-    else if (r.role === 'admin') { el.textContent = '✓ 管理员'; el.style.color = 'var(--ok)'; }
-    else if (r.status === 'unused') { el.textContent = '🆕 未使用 · 首次请求自动激活'; el.style.color = 'var(--warn)'; }
-    else { el.textContent = '✓ 已激活'; el.style.color = 'var(--ok)'; }
-    adminBtn.style.display = (r.role === 'admin') ? '' : 'none';
-  } catch (e) {
-    el.textContent = '校验失败'; el.style.color = 'var(--muted)';
-    adminBtn.style.display = 'none';
-  }
+const authenticated = () => Boolean(session && session.authenticated);
+function setSession(data) {
+  session = data;
+  const admin = data && data.role === 'admin';
+  $('sessionstatus').textContent = admin ? '✓ 管理员会话' : '✓ 已登录';
+  $('sessionstatus').style.color = 'var(--ok)';
+  $('adminbtn').style.display = admin ? '' : 'none';
+  $('dry').style.display = admin ? '' : 'none';
 }
-// 浏览器无自定义请求头的场景（图片/视频/下载/SSE）用 ?key= 传 Key
-function authUrl(u) {
-  const k = key();
-  if (!k || !u) return u;
-  return u + (u.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k);
+function clearSession() {
+  session = null;
+  $('sessionstatus').textContent = '';
+  $('adminbtn').style.display = 'none';
+  $('dry').style.display = 'none';
+  if (ES) { ES.close(); ES = null; }
+  stopFallback();
 }
+// 浏览器的图片、视频、下载和 SSE 都依赖同源 HttpOnly Cookie，无需也不会附加 Key。
+function authUrl(u) { return u; }
 
-// ---------- 登录门（进入工作台前必须在线验证 API Key） ----------
+// ---------- 登录门：Key 仅用于交换为短期 HttpOnly 会话 ----------
 function showGate(msg) {
   $('gate').style.display = 'flex';
   if (msg !== undefined) $('gateerr').textContent = msg;
@@ -355,7 +388,6 @@ function enterApp() {
   $('gate').style.display = 'none';
   $('gateerr').textContent = '';
   connectSSE();
-  verifyKey();
   refreshWorkflows();
   refreshHealth();
 }
@@ -366,19 +398,20 @@ async function gateLogin() {
   $('gateerr').textContent = '验证中…';
   $('gateerr').style.color = 'var(--muted)';
   try {
-    const r = await fetch('/v1/auth/verify', {
+    const res = await fetch('/v1/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: k })
-    }).then(r => r.json());
+      credentials: 'same-origin', body: JSON.stringify({ key: k })
+    });
+    const r = await res.json().catch(() => ({}));
     $('gateerr').style.color = 'var(--err)';
-    if (!r.valid) {
-      // 错误 Key：拒绝进入，停留在登录门
-      $('gateerr').textContent = '✗ 验证失败：' + (r.message || '无效的 API Key');
+    if (!res.ok || !r.authenticated) {
+      $('gateerr').textContent = '✗ 登录失败：' + (r.detail || '无效的 API Key');
       $('gatekey').select();
       return;
     }
-    localStorage.setItem('cbkey', k);
-    $('apikey').value = k;
+    $('gatekey').value = '';
+    localStorage.removeItem('cbkey'); // 清除旧版前端遗留的长期 Key
+    setSession(r);
     enterApp();
   } catch (e) {
     $('gateerr').style.color = 'var(--err)';
@@ -389,42 +422,34 @@ async function gateLogin() {
 }
 $('gatebtn').onclick = gateLogin;
 $('gatekey').addEventListener('keydown', e => { if (e.key === 'Enter') gateLogin(); });
-$('logoutbtn').onclick = () => {
-  if (ES) { ES.close(); ES = null; }
-  stopFallback();
-  localStorage.removeItem('cbkey');
-  $('apikey').value = '';
+$('logoutbtn').onclick = async () => {
+  try { await api('/v1/auth/logout', { method: 'POST' }); } catch (e) { /* cookie is cleared locally below */ }
+  clearSession();
   $('gatekey').value = '';
   showGate('请重新输入 API Key 进入');
   $('gatekey').focus();
 };
-// 打开页面时：有已保存 Key 则自动验证进入；无效/没有则停留在登录门
+// 打开页面时仅验证短期 Cookie；Key 永不保存到 localStorage。
 async function autoLogin() {
-  const k = localStorage.getItem('cbkey');
-  if (!k) { showGate(''); return; }
-  $('gatekey').value = k;
-  $('gateerr').textContent = '正在验证已保存的 Key…';
+  localStorage.removeItem('cbkey');
+  $('gateerr').textContent = '正在恢复安全会话…';
   $('gateerr').style.color = 'var(--muted)';
   try {
-    const r = await fetch('/v1/auth/verify', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: k })
-    }).then(r => r.json());
-    $('gateerr').style.color = 'var(--err)';
-    if (r.valid) { $('apikey').value = k; enterApp(); return; }
-    showGate('✗ 上次保存的 Key 已失效（' + (r.message || '无效') + '），请重新输入');
+    const res = await fetch('/v1/auth/session', { credentials: 'same-origin' });
+    const r = await res.json().catch(() => ({}));
+    if (res.ok && r.authenticated) { setSession(r); enterApp(); return; }
+    showGate('');
   } catch (e) {
     showGate('✗ 无法连接服务器，请确认服务已启动');
   }
 }
 
 async function api(path, opts = {}) {
-  const k = key();
   const h = { 'Content-Type': 'application/json' };
-  if (k) h['Authorization'] = 'Bearer ' + k;
-  const r = await fetch(path, { ...opts, headers: { ...h, ...(opts.headers || {}) } });
+  const r = await fetch(path, { ...opts, credentials: 'same-origin', headers: { ...h, ...(opts.headers || {}) } });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
+    if (r.status === 401) { clearSession(); showGate('登录已过期，请重新输入 API Key'); }
     const err = new Error(typeof j.detail === 'object' ? JSON.stringify(j.detail) : (j.detail || 'HTTP ' + r.status));
     err.status = r.status;
     err.detail = j.detail;
@@ -446,10 +471,9 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeBlockMo
 function connectSSE() {
   if (ES) ES.close();
   setWS(false, '未连接');
-  const k = key();
-  if (!k) return;
+  if (!authenticated()) return;
   try {
-    ES = new EventSource('/v1/events?key=' + encodeURIComponent(k));
+    ES = new EventSource('/v1/events');
   } catch (e) { setWS(false, '不支持 SSE'); return; }
   ES.onopen = () => { setWS(true, '实时已连接'); stopFallback(); };
   ES.onmessage = (e) => {
@@ -570,7 +594,7 @@ function renderStage() {
     const t = Date.now();
     if ($('liveimg').src.indexOf('preview.png') < 0 || t - liveTs > 300) {
       liveTs = t;
-      $('liveimg').src = authUrl(j.preview_url) + '&t=' + t;
+      $('liveimg').src = authUrl(j.preview_url) + (j.preview_url.includes('?') ? '&' : '?') + 't=' + t;
     }
   } else {
     live.style.display = 'none';
@@ -616,10 +640,12 @@ function renderGallery(j) {
     const ext = (f.filename.split('.').pop() || '').toLowerCase();
     const isImg = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
     const isVid = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+    const isAudio = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'opus'].includes(ext);
     const u = authUrl(f.url);
     const media = isImg
       ? `<img src="${u}" loading="lazy" alt="${escapeHtml(f.filename)}">`
       : isVid ? `<video src="${u}" controls preload="metadata"></video>`
+      : isAudio ? `<audio src="${u}" controls preload="metadata"></audio>`
       : `<div style="padding:20px;text-align:center;color:#9ca3af">📄 文件</div>`;
     const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.round(f.size / 1024) + ' KB';
     return `<div class="fcard">${media}<div class="fmeta">
@@ -636,7 +662,7 @@ async function generate(dry) {
   $('composererr').innerHTML = '';
   const prompt = $('prompt').value.trim();
   if (!prompt) { $('composererr').innerHTML = '<div class="errbox">请输入提示词</div>'; return; }
-  if (!key()) { $('composererr').innerHTML = '<div class="errbox">请先在右上角填入 API Key</div>'; $('apikey').focus(); return; }
+  if (!authenticated()) { $('composererr').innerHTML = '<div class="errbox">请先登录后再生成</div>'; showGate('请先输入 API Key 登录'); $('gatekey').focus(); return; }
   if (!$('wf').value) {
     refreshWorkflows();  // 主动重试一次（例如刚填完 Key 还没加载完成）
     $('composererr').innerHTML = '<div class="errbox">工作流列表尚未加载。请确认右上角已填入正确的 API Key，稍候 1~2 秒再点生成（列表会自动刷新）</div>';
@@ -665,7 +691,6 @@ async function generate(dry) {
         created_at: Date.now() / 1000, files: []
       });
       renderHistory(); renderStage();
-      verifyKey();  // 激活 Key 首次请求后已被绑定，刷新状态徽标
     }
   } catch (e) {
     if (isBlockedError(e)) openBlockModal();
@@ -680,25 +705,45 @@ $('dry').onclick = () => generate(true);
 // ---------- 结构模板（预设提示词） ----------
 const IMAGE_STYLES = [["cinematic", "电影感"], ["cyberpunk", "赛博朋克"], ["chinese", "国风古韵"], ["healing", "治愈清新"], ["suspense", "悬疑惊悚"], ["scifi", "科幻史诗"], ["portrait", "人像精修"], ["anime", "二次元动漫"]];
 const VIDEO_STYLES = [["cinematic", "电影感叙事"], ["suspense", "悬疑惊悚"], ["scifi", "科幻史诗"], ["chinese", "国风武侠"], ["healing", "治愈日常"], ["action", "动作爽感"], ["documentary", "纪实vlog"], ["anime", "二次元动画"]];
+const AUDIO_CATEGORIES = [{
+  name: '音频提示词',
+  templates: [
+    { label: '雨夜环境声', prompt: '雨夜城市街道，近处雨滴打在伞面，远处车辆驶过，霓虹灯下的潮湿氛围，细腻环境声' },
+    { label: '电影氛围配乐', prompt: '电影感氛围配乐，低沉大提琴和缓慢钢琴，悬念逐渐加强，干净的制作质感' },
+    { label: '温暖轻音乐', prompt: '温暖治愈的轻音乐，原声吉他、钢琴和柔和弦乐，清晨阳光感，无人声' }
+  ]
+}];
 let media = 'image';
 let PRESET_PLACEHOLDER = '【主体内容】';
 let PRESETS = null;
 
 function setMedia(m) {
   media = m;
-  const styles = m === 'video' ? VIDEO_STYLES : IMAGE_STYLES;
-  $('style').innerHTML = styles.map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
   const isVideo = m === 'video';
+  const isAudio = m === 'audio';
+  const styles = isVideo ? VIDEO_STYLES : IMAGE_STYLES;
+  $('style').innerHTML = styles.map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
+  $('arfield').style.display = isAudio ? 'none' : '';
+  $('resfield').style.display = isAudio ? 'none' : '';
+  $('seedfield').style.display = isAudio ? 'none' : '';
+  $('countfield').style.display = isAudio ? 'none' : '';
   $('bs').style.display = isVideo ? 'none' : '';
   $('dur').style.display = isVideo ? '' : 'none';
   $('countlabel').textContent = isVideo ? '生成秒数' : '批量张数';
+  $('stylefield').style.display = isAudio ? 'none' : '';
+  $('enh').style.display = isAudio ? 'none' : '';
+  $('audiohint').style.display = isAudio ? '' : 'none';
+  $('prompt').placeholder = isAudio
+    ? '描述想生成的声音、氛围、乐器或音乐风格，例如：雨夜城市的细腻环境声，远处车流和霓虹氛围'
+    : '输入提示词，例如：年轻女孩在雨夜城市街道上撑着透明雨伞回头微笑，电影感，霓虹灯光，胶片质感';
   loadPresets();
 }
 
 function loadPresets() {
   const render = d => {
     if (d.placeholder) PRESET_PLACEHOLDER = d.placeholder;
-    const cats = media === 'video' ? (d.video_categories || []) : (d.categories || []);
+    const cats = media === 'video' ? (d.video_categories || [])
+      : media === 'audio' ? AUDIO_CATEGORIES : (d.categories || []);
     const sel = $('preset');
     sel.innerHTML = '<option value="">选择模板…</option>';
     cats.forEach(c => {
@@ -786,20 +831,25 @@ function copyKey(btn) {
     ta.select(); document.execCommand('copy'); ta.remove(); done();
   }
 }
+function showIssuedKey(rawKey, label) {
+  $('genresult').innerHTML = `<div class="infobox">${escapeHtml(label)}（仅显示一次，请立即复制并通过安全渠道交付）：</div>` +
+    `<div style="display:flex;align-items:center;gap:8px;font-family:Consolas,monospace;font-size:12px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:4px 0">` +
+    `<span style="flex:1;word-break:break-all">${escapeHtml(rawKey)}</span><button class="btn ghost" style="padding:4px 10px;font-size:12px" onclick="copyKey(this)">复制</button></div>`;
+}
 async function renderAdminKeys() {
   $('adminbody').innerHTML = '<div class="infobox">加载中…</div>';
   try {
     const r = await api('/v1/admin/keys');
     const ks = r.keys || [];
     if (!ks.length) { $('adminbody').innerHTML = '<div class="empty" style="padding:24px">暂无发放记录</div>'; return; }
-    const ST = { unused: ['未使用', 'var(--warn)'], used: ['已使用', 'var(--ok)'], revoked: ['已吊销', 'var(--err)'] };
+    const ST = { unused: ['未使用', 'var(--warn)'], used: ['已激活', 'var(--ok)'], revoked: ['已吊销', 'var(--err)'], expired: ['已过期', 'var(--err)'] };
     $('adminbody').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">Key</th><th style="padding:4px">状态</th><th style="padding:4px">绑定用户</th><th style="padding:4px">备注</th><th style="padding:4px">创建时间</th><th style="padding:4px"></th></tr>' +
+      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">记录 ID</th><th style="padding:4px">状态</th><th style="padding:4px">绑定用户</th><th style="padding:4px">备注</th><th style="padding:4px">到期时间</th><th style="padding:4px"></th></tr>' +
       ks.map(k => {
         const st = ST[k.status] || [k.status, 'var(--muted)'];
-        const t = new Date((k.created_at || 0) * 1000).toLocaleString('zh-CN', { hour12: false });
-        const rev = k.status === 'unused' ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="revokeKey('${k.key}')">吊销</button>` : '';
-        return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;word-break:break-all;padding:6px 4px">${escapeHtml(k.key)}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px">${escapeHtml(k.bound_user || '—')}</td><td style="padding:6px 4px">${escapeHtml(k.note || '')}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${rev}</td></tr>`;
+        const t = k.expires_at ? new Date(k.expires_at * 1000).toLocaleString('zh-CN', { hour12: false }) : '—';
+        const rev = (k.status === 'unused' || k.status === 'used') ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="revokeKey('${k.id}')">吊销</button>` : '';
+        return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;word-break:break-all;padding:6px 4px">${escapeHtml(k.id)}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px">${escapeHtml(k.bound_user || '—')}</td><td style="padding:6px 4px">${escapeHtml(k.note || '')}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${rev}</td></tr>`;
       }).join('') + '</table>';
   } catch (e) { $('adminbody').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>'; }
 }
@@ -810,32 +860,40 @@ async function renderAdminUsers() {
     const us = r.users || [];
     if (!us.length) { $('adminbody').innerHTML = '<div class="empty" style="padding:24px">暂无用户</div>'; return; }
     $('adminbody').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">用户 ID</th><th style="padding:4px">角色</th><th style="padding:4px">状态</th><th style="padding:4px">激活时间</th><th style="padding:4px"></th></tr>' +
+      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">用户 ID</th><th style="padding:4px">角色</th><th style="padding:4px">状态</th><th style="padding:4px">访问 Key 到期</th><th style="padding:4px"></th></tr>' +
       us.map(u => {
         const st = u.status === 'active' ? ['启用', 'var(--ok)'] : ['停用', 'var(--err)'];
-        const t = new Date((u.activated_at || 0) * 1000).toLocaleString('zh-CN', { hour12: false });
+        const t = u.key_expires_at ? new Date(u.key_expires_at * 1000).toLocaleString('zh-CN', { hour12: false }) : '—';
         const act = u.role === 'user'
-          ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="setUserStatus('${u.user_id}','${u.status === 'active' ? 'disabled' : 'active'}')">${u.status === 'active' ? '停用' : '启用'}</button>`
+          ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="setUserStatus('${u.user_id}','${u.status === 'active' ? 'disabled' : 'active'}')">${u.status === 'active' ? '停用' : '启用'}</button> <button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="rotateUserKey('${u.user_id}')">轮换 Key</button>`
           : '';
         return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;padding:6px 4px">${escapeHtml(u.user_id)}</td><td style="padding:6px 4px">${u.role === 'admin' ? '管理员' : '用户'}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${act}</td></tr>`;
       }).join('') + '</table>';
   } catch (e) { $('adminbody').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>'; }
 }
-async function revokeKey(k) {
+async function revokeKey(keyId) {
   if (!confirm('吊销后该 Key 无法再使用（若已激活将同时停用对应用户），确认？')) return;
-  try { await api('/v1/admin/keys/' + encodeURIComponent(k) + '/revoke', { method: 'POST' }); renderAdminKeys(); }
+  try { await api('/v1/admin/keys/revoke', { method: 'POST', body: JSON.stringify({ key_id: keyId }) }); renderAdminKeys(); }
   catch (e) { alert(e.message); }
 }
 async function setUserStatus(uid, st) {
   try { await api('/v1/admin/users/' + encodeURIComponent(uid) + '/status', { method: 'POST', body: JSON.stringify({ status: st }) }); renderAdminUsers(); }
   catch (e) { alert(e.message); }
 }
+async function rotateUserKey(uid) {
+  if (!confirm('轮换后该用户现有 API Key 和所有浏览器会话会立即失效。确认？')) return;
+  try {
+    const r = await api('/v1/admin/users/' + encodeURIComponent(uid) + '/keys/rotate', { method: 'POST', body: JSON.stringify({}) });
+    showIssuedKey(r.key.key, '用户的新 API Key');
+    renderAdminUsers(); renderAdminKeys();
+  } catch (e) { alert(e.message); }
+}
 
 // ---------- 工作流列表 & 健康检查 ----------
 let WORKFLOWS = [];
 async function refreshWorkflows() {
-  if (!key()) {
-    $('wf').innerHTML = '<option value="">（请先填写 API Key）</option>';
+  if (!authenticated()) {
+    $('wf').innerHTML = '<option value="">（请先登录）</option>';
     return;
   }
   try {
@@ -850,10 +908,10 @@ async function refreshWorkflows() {
     // 同步 media：模板/风格/批次或秒数始终与（恢复后的）工作流一致
     const w = WORKFLOWS.find(x => x.id === $('wf').value);
     if (w && w.media) setMedia(w.media);
-  } catch (e) { $('wf').innerHTML = '<option value="">（加载失败，检查 API Key）</option>'; }
+  } catch (e) { $('wf').innerHTML = '<option value="">（加载失败，请重新登录）</option>'; }
 }
 async function refreshHealth() {
-  if (!key()) return;
+  if (!authenticated()) return;
   try {
     const h = await api('/v1/health');
     document.title = h.ok ? 'ComfyBridge · 已连接' : 'ComfyBridge · 离线';

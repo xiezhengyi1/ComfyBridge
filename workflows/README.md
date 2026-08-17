@@ -43,6 +43,7 @@
 | `seed_slots` | 随机种子写入位置 |
 | `batch_size_slots` | 批量张数写入位置（API 参数 `batch_size` 1-8；不传则不注入，保持工作流默认值） |
 | `filename_slots` | 输出文件名前缀写入位置 |
+| `force_run_slots` | 可选：写入一次性执行令牌。ComfyTV Stage 建议配置，避免同输入被缓存复用 |
 | `collect.mode` | 收集方式：`history` = 从 ComfyUI 输出节点收集（默认） |
 
 > node 数字是 API 格式 JSON 里的节点 ID（键名）。
@@ -68,3 +69,14 @@ curl -X POST http://127.0.0.1:8000/v1/generate \
   `picked: true` 表示选择器选中的那张。
 - **节点 ID 填错**：任务会 failed 并给出“工作流中不存在节点 X”的报错。
 - **提示词字段填错**：ComfyUI 提交时会返回 node_errors，错误会原样存到任务记录。
+
+## ComfyTV T2A 文生音频
+
+`comfytv_t2a` 通过 `ComfyTV.SpeechStage` 调用云端名为 **T2A** 的工作流，关键字段为：
+
+- Stage 的 `workflow` 必须精确为 `T2A`；
+- `main_prompt` 交由服务端绑定到 T2A 的 `PrimitiveStringMultiline.value`；
+- 使用 `force_run_token` 确保每次请求都会重新执行；
+- T2A 的当前服务端配置固定为 30 秒；时长、采样参数仍由 ComfyTV 内部工作流管理。
+
+不要把外层工作流的 `main_prompt` 错绑到 T2A 的 `CLIPTextEncode.text`、模型选择或采样器字段。

@@ -1,0 +1,17 @@
+{
+  "1": {
+    "class_type": "ComfyTV.SpeechStage",
+    "inputs": {
+      "force_run_token": 0,
+      "project_id": "default",
+      "parent_output_id": 0,
+      "workflow": "T2A",
+      "main_prompt": "placeholder",
+      "voice": "",
+      "language": "Auto",
+      "speed": 1.0,
+      "reference_text": "",
+      "custom_params": "{}"
+    }
+  }
+}

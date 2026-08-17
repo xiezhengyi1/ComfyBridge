@@ -11,6 +11,7 @@
 import sys
 from pathlib import Path
 
+import config as cfg_mod
 from key_registry import KeyRegistry
 
 
@@ -23,7 +24,9 @@ def main() -> int:
         return 2
     note = args[1] if len(args) > 1 else ""
     base = Path(__file__).resolve().parent
-    reg = KeyRegistry(base / "storage", {})   # CLI 生成不需要管理员 key 列表
+    cfg = cfg_mod.load_config()
+    cfg_mod.bootstrap(cfg)
+    reg = KeyRegistry(base / "storage", cfg)
     keys = reg.generate_keys(count, note)
     print(f"已生成 {len(keys)} 个激活 Key（备注: {note or '-'}），请立即复制分发：")
     for k in keys:
