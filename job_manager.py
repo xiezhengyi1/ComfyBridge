@@ -26,9 +26,9 @@ VIEW_URL_RE = re.compile(r"/view\?([^\s\"']+)")
 
 
 class JobManager:
-    def __init__(self, client: comfy_client.ComfyClient, storage_dir, cfg: dict,
+    def __init__(self, pool, storage_dir, cfg: dict,
                  default_owner: str | None = None):
-        self.client = client
+        self.pool = pool
         self.storage = Path(storage_dir)
         (self.storage / "jobs").mkdir(parents=True, exist_ok=True)
         self.cfg = cfg
@@ -57,13 +57,13 @@ class JobManager:
             pid = job.get("comfy_prompt_id")
             if pid:
                 try:
-                    entry = self.client.history(pid)
+                    client, entry = self._find_history(pid)
                     if entry is not None:
                         if entry.get("status") == "error":
                             job["status"] = "failed"
                             job["error"] = comfy_client.ComfyClient._format_error(entry)
                         elif entry.get("outputs") or entry.get("status") == "success":
-                            job["files"] = self._collect(entry, job["id"])
+                            job["files"] = self._collect(entry, job["id"], client)
                             job["status"] = "completed"
                         else:
                             job["status"] = "interrupted"
@@ -84,6 +84,14 @@ class JobManager:
                 self._jobs[job["id"]] = job
             self._save(job)
             self._publish(job)
+
+    def _find_history(self, pid: str):
+        """在全部 worker 中查找 prompt 的 history；返回 (client, entry) 或 (None, None)。"""
+        for c in self.pool.clients:
+            entry = c.history(pid)
+            if entry is not None:
+                return c, entry
+        return None, None
 
     # ---------------- 持久化 ----------------
     def _job_dir(self, job_id: str) -> Path:
@@ -196,10 +204,20 @@ class JobManager:
         job = self.get(job_id)
         if job is None:
             return
+        client = None
         try:
             job["status"] = "running"
             job["started_at"] = time.time()
             self._update(job)
+
+            wid = job["workflow_id"]
+            pin = (self.cfg.get("workflow_worker") or {}).get(wid)
+            vram_mb = int((self.cfg.get("workflow_vram_mb") or {}).get(
+                wid, self.cfg.get("default_vram_mb", 0)) or 0)
+            client = self.pool.pick(vram_needed=vram_mb, pin_url=pin)
+            if client is None:
+                raise comfy_client.ComfyError("没有可用的 ComfyUI 实例（全部离线）")
+            job["comfy_worker"] = client.base
 
             manifest = workflow_engine.load_manifest(job["workflow_id"])
             p = job["params"]
@@ -213,18 +231,18 @@ class JobManager:
             )
             p["seed"] = seed
 
-            prompt_id = self.client.submit(wf)
+            prompt_id = client.submit(wf)
             job["comfy_prompt_id"] = prompt_id
             with self._lock:
                 self._prompt_map[prompt_id] = job_id
             self._update(job)
 
-            entry = self.client.wait(
+            entry = client.wait(
                 prompt_id,
                 poll_interval=float(self.cfg.get("poll_interval", 1.0)),
                 timeout=float(self.cfg.get("job_timeout", 900)),
             )
-            job["files"] = self._collect(entry, job_id)
+            job["files"] = self._collect(entry, job_id, client)
             job["status"] = "completed"
         except TimeoutError as e:
             job["status"] = "timed_out"
@@ -236,6 +254,8 @@ class JobManager:
             job["status"] = "failed"
             job["error"] = f"{type(e).__name__}: {e}"
         finally:
+            if client is not None:
+                self.pool.release(client)
             job["finished_at"] = time.time()
             job.pop("progress", None)     # 实时字段不入最终快照
             job.pop("preview_url", None)
@@ -303,7 +323,7 @@ class JobManager:
         self._ws_throttle[job["id"]] = now
         self._publish(job)  # 实时推送但不落盘（最终状态在任务结束时持久化）
 
-    def _collect(self, entry: dict, job_id: str) -> list:
+    def _collect(self, entry: dict, job_id: str, client=None) -> list:
         """从 history 条目的 outputs 中收集所有产物文件并下载到本地。
 
         兼容两种形态：
@@ -311,6 +331,8 @@ class JobManager:
         2. ComfyTV 输出：字段值为 /view?filename=... 的 URL（可能包在 JSON 字符串里），
            其中 picked 字段表示选中项。
         """
+        if client is None:
+            client = self.pool.any()
         job_dir = self._job_dir(job_id)
         job_dir.mkdir(parents=True, exist_ok=True)
         outputs = entry.get("outputs", {}) or {}
@@ -337,8 +359,10 @@ class JobManager:
 
         files = []
         for (fn, subfolder, ftype), meta in candidates.items():
+            if client is None:
+                continue  # 没有 worker，无法下载
             try:
-                data = self.client.view(fn, subfolder, ftype)
+                data = client.view(fn, subfolder, ftype)
             except comfy_client.ComfyError:
                 continue  # 文件可能已被清理，跳过
             (job_dir / fn).write_bytes(data)

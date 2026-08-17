@@ -11,6 +11,7 @@ v0.4 鉴权体系（凭据保护）：
 
 云部署时支持环境变量覆盖（避免密钥进镜像/仓库）：
   COMFYBRIDGE_COMFYUI_URL   ComfyUI 地址
+  COMFYBRIDGE_COMFYUI_WORKERS  多个 ComfyUI 实例（逗号分隔，用于多卡并行）
   COMFYBRIDGE_API_KEY       管理员 API Key（明文注入，启动时自动归档进 admin-key.txt 并转存摘要）
   COMFYBRIDGE_KEY_HASH_SECRET  Key/Session HMAC 服务端密钥
   COMFYBRIDGE_CORS_ORIGINS  允许跨域来源（逗号分隔，如公网访问地址）
@@ -35,6 +36,20 @@ HASH_PREFIX = "hmac$"
 DEFAULTS = {
     # 你的云上 ComfyUI 地址（不带末尾斜杠）
     "comfyui_base_url": "https://8188-cpod-1u2zhjzg91gm.pod.compshare.cn",
+
+    # 多 ComfyUI 实例（多卡并行）。显式列表优先级最高；留空则按 auto_discover
+    # 自动扫描本机端口。例如：["http://127.0.0.1:8189", "http://127.0.0.1:8190"]
+    "comfyui_workers": [],
+    "auto_discover": True,           # 自动扫描本机端口发现 ComfyUI 实例
+    "discover_host": "127.0.0.1",
+    "discover_port_start": 8188,
+    "discover_port_end": 8200,
+    "discover_exclude_ports": [],    # 排除的端口（例如 CPU 控制器 8188）
+
+    # 显存感知调度：按工作流声明显存需求（MB）与 worker 亲和。
+    "workflow_vram_mb": {},          # 例 {"h3_video": 24000}，把大任务路由到装得下的卡
+    "default_vram_mb": 8192,         # 未声明工作流的默认需求；0 = 不做显存过滤
+    "workflow_worker": {},           # 工作流硬亲和：例 {"h3_video": "http://127.0.0.1:8189"}
 
     # 管理员 Key 列表（v0.4：可调 /v1/admin/keys 批量生成一次性激活 Key 分发给用户）。
     # 留空数组且 auth_disabled=false 时，启动会自动生成一个并写入本文件。
@@ -103,6 +118,11 @@ def load_config() -> dict:
     env = os.environ
     if env.get("COMFYBRIDGE_COMFYUI_URL"):
         cfg["comfyui_base_url"] = env["COMFYBRIDGE_COMFYUI_URL"].strip().rstrip("/")
+    if env.get("COMFYBRIDGE_COMFYUI_WORKERS"):
+        cfg["comfyui_workers"] = [
+            u.strip().rstrip("/") for u in env["COMFYBRIDGE_COMFYUI_WORKERS"].split(",")
+            if u.strip()
+        ]
     if env.get("COMFYBRIDGE_API_KEY"):
         k = env["COMFYBRIDGE_API_KEY"].strip()
         if k and k not in cfg.get("api_keys", []):

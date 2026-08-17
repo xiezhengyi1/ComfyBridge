@@ -33,9 +33,10 @@ import config as cfg_mod
 import prompt_enhance
 import safety
 import workflow_engine
-from comfy_client import ComfyClient, ComfyListener
+from comfy_client import ComfyListener
 from job_manager import JobManager
 from key_registry import KeyRegistry
+from worker_pool import ComfyPool
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -43,15 +44,35 @@ CLIENT_ID = "comfybridge"
 SESSION_COOKIE = "cb_session"
 cfg = cfg_mod.load_config()
 
-client = None
-listener = None
+pool = None
+listeners = []
 job_manager = None
 registry = None
 
 
+def _build_pool(cfg: dict):
+    """按优先级构造 ComfyUI worker 池：显式列表 > 自动发现 > 单例 base_url。"""
+    urls = [str(u).strip().rstrip("/") for u in (cfg.get("comfyui_workers") or [])
+            if u and str(u).strip()]
+    if urls:
+        return ComfyPool.from_urls(urls)
+
+    if cfg.get("auto_discover", True):
+        host = str(cfg.get("discover_host", "127.0.0.1"))
+        start = int(cfg.get("discover_port_start", 8188))
+        end = int(cfg.get("discover_port_end", 8200))
+        exclude = {int(p) for p in (cfg.get("discover_exclude_ports") or [])}
+        discovered = ComfyPool.discover(host, start, end, exclude=exclude)
+        if len(discovered) > 0:
+            return discovered
+
+    base = str(cfg.get("comfyui_base_url", "")).strip().rstrip("/")
+    return ComfyPool.from_urls([base] if base else [])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, listener, job_manager, registry
+    global pool, listeners, job_manager, registry
     cfg_mod.bootstrap(cfg)
     registry = KeyRegistry(BASE_DIR / "storage", cfg)
     if not cfg.get("auth_disabled"):
@@ -61,14 +82,18 @@ async def lifespan(app: FastAPI):
         else:
             print("[ComfyBridge] 警告：config.json 的 api_keys 只有 hmac$ 摘要但找不到 admin-key.txt；"
                   "请用 COMFYBRIDGE_API_KEY 环境变量注入明文管理员 Key，或清空 api_keys 让服务重新生成。")
-    client = ComfyClient(cfg["comfyui_base_url"])
-    job_manager = JobManager(client, BASE_DIR / "storage", cfg,
+    pool = _build_pool(cfg)
+    print(f"[ComfyBridge] worker 池（{len(pool)} 个）: " + ", ".join(pool.urls) or "(空)")
+    job_manager = JobManager(pool, BASE_DIR / "storage", cfg,
                              default_owner=registry.admin_owner_id())
-    listener = ComfyListener(cfg["comfyui_base_url"], CLIENT_ID, job_manager.on_ws_event,
-                             is_busy=job_manager.has_running)
+    listeners = [
+        ComfyListener(c.base, CLIENT_ID, job_manager.on_ws_event,
+                      is_busy=job_manager.has_running)
+        for c in pool.clients
+    ]
     yield
-    if listener is not None:
-        listener.close()
+    for l in listeners:
+        l.close()
     job_manager._exec.shutdown(wait=False)
 
 
@@ -293,17 +318,24 @@ def list_workflows(_=Depends(require_auth)):
 
 @app.get("/v1/health")
 def health(_=Depends(require_auth)):
-    try:
-        s = client.system_stats()
-        sys = s.get("system", {})
+    workers = pool.status() if pool else []
+    sys_info = None
+    if pool:
+        for c in pool.clients:
+            try:
+                sys_info = c.system_stats().get("system", {})
+                break
+            except Exception:
+                continue
+    if sys_info is not None:
         return {
             "ok": True,
             "version": app.version,
-            "comfyui_version": sys.get("comfyui_version"),
-            "ram_free_gb": round(sys.get("ram_free", 0) / 1024**3, 1),
+            "comfyui_version": sys_info.get("comfyui_version"),
+            "ram_free_gb": round(sys_info.get("ram_free", 0) / 1024**3, 1),
+            "workers": workers,
         }
-    except Exception:
-        return {"ok": False, "version": app.version}
+    return {"ok": False, "version": app.version, "workers": workers}
 
 
 class EnhanceRequest(BaseModel):

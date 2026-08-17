@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py comfy_client.py config.py job_manager.py prompt_enhance.py safety.py workflow_engine.py ./
+COPY app.py comfy_client.py config.py job_manager.py prompt_enhance.py safety.py workflow_engine.py worker_pool.py ./
 COPY static/ ./static/
 COPY workflows/ ./workflows/
 COPY blocklist.json ./blocklist.json

@@ -37,6 +37,46 @@ class ComfyClient:
     def system_stats(self) -> dict:
         return self._get("/system_stats").json()
 
+    def queue_status(self):
+        """返回该实例队列的 (running, pending)；不可达时返回 None。
+
+        用短超时，避免选 worker 时被挂死的实例拖慢整个调度。
+        """
+        try:
+            r = self.session.get(self.base + "/queue", timeout=3)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        running = data.get("queue_running") or []
+        pending = data.get("queue_pending") or []
+        return (len(running), len(pending))
+
+    def vram_info(self):
+        """返回该实例可见 CUDA 卡的 (显存总量MB, 空闲MB)；不可达返回 None。
+
+        单卡 worker 只有一个 device；多卡 worker（CUDA_VISIBLE_DEVICES=0,1）会求和。
+        用于显存感知调度：把大任务路由到装得下的卡，小任务见缝插针。
+        """
+        try:
+            r = self.session.get(self.base + "/system_stats", timeout=3)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+        except Exception:
+            return None
+        devices = data.get("devices") or []
+        total = 0
+        free = 0
+        for d in devices:
+            if isinstance(d, dict) and d.get("type") == "cuda":
+                total += int(d.get("vram_total", 0) or 0)
+                free += int(d.get("vram_free", 0) or 0)
+        return (total, free) if devices else None
+
     def submit(self, workflow: dict) -> str:
         """提交工作流，返回 prompt_id。"""
         r = self._post_json("/prompt", {"prompt": workflow, "client_id": "comfybridge"})
