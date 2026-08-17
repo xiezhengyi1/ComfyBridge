@@ -38,7 +38,7 @@ import workflow_engine
 from comfy_client import ComfyListener
 from job_manager import JobManager
 from key_registry import KeyRegistry
-from worker_pool import ComfyPool
+from worker_pool import ComfyPool, _probe
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -53,11 +53,18 @@ registry = None
 
 
 def _build_pool(cfg: dict):
-    """按优先级构造 ComfyUI worker 池：显式列表 > 自动发现 > 单例 base_url。"""
+    """按优先级构造 ComfyUI worker 池：显式列表 > 自动发现 > 单例 base_url。
+
+    显式列表若全部离线（例如部署脚本把桥指向了一个没起来的 worker 端口），
+    会回退到自动发现，避免桥拿着一个死地址傻等。
+    """
     urls = [str(u).strip().rstrip("/") for u in (cfg.get("comfyui_workers") or [])
             if u and str(u).strip()]
     if urls:
-        return ComfyPool.from_urls(urls)
+        alive = [u for u in urls if _probe(u)]
+        if alive:
+            return ComfyPool.from_urls(alive)
+        print("[ComfyBridge] 显式 ComfyUI 列表全部离线，回退到自动发现: " + ", ".join(urls))
 
     if cfg.get("auto_discover", True):
         host = str(cfg.get("discover_host", "127.0.0.1"))
