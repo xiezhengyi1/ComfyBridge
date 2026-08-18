@@ -74,8 +74,10 @@ DEFAULTS = {
     # 过小会把正常操作误判为“请求过于频繁”，故默认放宽到 60）
     "rate_limit_per_minute": 60,
     "login_rate_limit_per_minute": 5,       # 未认证登录尝试：按源 IP 限流
-    "sse_connection_limit_per_user": 3,     # 每用户最多同时保持的 SSE 连接数
-    "sse_connection_rate_per_minute": 5,    # 每用户每分钟新建 SSE 数
+    # 浏览器刷新/断线重试时，旧连接需要极短时间才能在服务端释放；为正常的
+    # EventSource 自动重连留出余量，同时仍限制单用户持续创建连接的行为。
+    "sse_connection_limit_per_user": 4,     # 每用户最多同时保持的 SSE 连接数
+    "sse_connection_rate_per_minute": 15,   # 每用户每分钟新建 SSE 数
 
     # 并发任务数（同时跑几个生成）
     "max_concurrent_jobs": 2,

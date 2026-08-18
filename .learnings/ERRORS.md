@@ -523,3 +523,36 @@ Follow the browser recovery guidance and use a short page-state probe before req
 ### Resolution
 - **Resolved**: 2026-08-17T00:00:00+08:00
 - **Notes**: The canvas loaded and confirmed the Stable Audio output history. Screenshot capture remained unavailable, so the verified ComfyTV configuration API was used to identify and update the binding.
+
+---
+
+## [ERR-20260818-001] local-python-missing-project-dependencies
+
+**Logged**: 2026-08-18T00:00:00+08:00
+**Priority**: low
+**Status**: blocked
+**Area**: tests
+
+### Summary
+An SSE regression check invoked the system Python directly, which does not have FastAPI installed.
+
+### Error
+```text
+ModuleNotFoundError: No module named 'fastapi'
+```
+
+### Context
+- The project starts with the bundled `.vendor` runtime when it is present.
+- The failed command did not set `PYTHONPATH` to that directory.
+
+### Suggested Fix
+Repair the project dependency bundle before running API smoke tests: `.vendor` lacks `annotated_doc`, while `.pip-tmp` exposes an incomplete `fastapi` module. Until then, use static compilation and JavaScript syntax checks for this change.
+
+### Metadata
+- Reproducible: yes
+- Related Files: start.bat, .vendor, .pip-tmp, requirements.txt
+- See Also: ERR-20260816-003, ERR-20260816-007
+
+### Resolution
+- **Blocked**: 2026-08-18T00:00:00+08:00
+- **Notes**: Both repository-provided dependency directories failed before the endpoint could be imported. The implementation still passed Python compilation, JavaScript syntax validation, and whitespace validation.

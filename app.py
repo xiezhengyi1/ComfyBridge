@@ -668,29 +668,43 @@ async def events(request: Request, user=Depends(require_auth)):
         q_rate = _rate[f"sse:{identity}"]
         while q_rate and now - q_rate[0] > 60:
             q_rate.popleft()
-        if len(q_rate) >= int(cfg.get("sse_connection_rate_per_minute", 5)):
+        if len(q_rate) >= int(cfg.get("sse_connection_rate_per_minute", 15)):
             raise HTTPException(429, "实时连接创建过于频繁，请稍后再试")
         q_rate.append(now)
     with _sse_lock:
-        if _sse_counts[identity] >= int(cfg.get("sse_connection_limit_per_user", 3)):
+        if _sse_counts[identity] >= int(cfg.get("sse_connection_limit_per_user", 4)):
             raise HTTPException(429, "实时连接数已达上限")
         _sse_counts[identity] += 1
     q = job_manager.subscribe(owner=owner)
 
     async def gen():
+        # `retry` lets the browser back off between reconnect attempts.  This
+        # prevents a brief network hiccup from immediately exhausting the
+        # per-user connection-creation limit below.
+        heartbeat_at = time.monotonic()
         try:
+            yield "retry: 5000\n\n"
             snap = {"type": "snapshot", "jobs": job_manager.list(100, owner=owner)}
             yield "data: " + json.dumps(snap, ensure_ascii=False) + "\n\n"
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    job = await asyncio.to_thread(q.get, timeout=10)
+                    # Keep this wait short.  A page refresh aborts the old
+                    # EventSource immediately; polling every second releases
+                    # its subscription/count promptly instead of keeping a
+                    # stale connection around for up to ten seconds.
+                    job = await asyncio.to_thread(q.get, timeout=1)
                 except queue.Empty:
-                    yield ": ping\n\n"  # 保活注释帧
+                    # A comment frame keeps intermediaries from treating an
+                    # otherwise idle event stream as a dead HTTP request.
+                    if time.monotonic() - heartbeat_at >= 10:
+                        yield ": ping\n\n"
+                        heartbeat_at = time.monotonic()
                     continue
                 msg = {"type": "job_update", "job": job}
                 yield "data: " + json.dumps(msg, ensure_ascii=False) + "\n\n"
+                heartbeat_at = time.monotonic()
         finally:
             job_manager.unsubscribe(q)
             with _sse_lock:
@@ -699,7 +713,11 @@ async def events(request: Request, user=Depends(require_auth)):
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-store, private", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-store, private",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

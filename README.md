@@ -183,7 +183,9 @@ curl -X POST http://127.0.0.1:8000/v1/generate \
 | `user_key_ttl_days` | 30 | 激活后 API Key 的有效期（天） |
 | `session_ttl_hours` | 12 | 浏览器 HttpOnly 会话的有效期（小时） |
 | `session_cookie_secure` | true | HTTPS Cookie；仅本地 HTTP 调试时才设为 false |
-| `rate_limit_per_minute` | 10 | 每 Key 限流 |
+| `rate_limit_per_minute` | 60 | 每 Key 限流 |
+| `sse_connection_limit_per_user` | 4 | 每用户同时保持的 SSE 连接数上限 |
+| `sse_connection_rate_per_minute` | 15 | 每用户每分钟可新建的 SSE 连接数 |
 | `max_concurrent_jobs` | 2 | 并发任务数 |
 | `job_timeout` | 900 | 单任务超时秒数 |
 | `poll_interval` | 1.0 | 轮询间隔秒 |

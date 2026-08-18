@@ -396,6 +396,8 @@ let jobs = new Map();       // job_id -> job
 let activeId = null;        // 当前选中任务
 let ES = null;              // EventSource
 let fallbackTimer = null;
+let sseErrorTimer = null;
+let isPageUnloading = false;
 let liveTs = 0;
 let session = null;
 let uploadedImages = [];    // [{view_url, preview_url}] 图生视频的参考图
@@ -415,7 +417,7 @@ function clearSession() {
   $('sessionstatus').textContent = '';
   $('adminbtn').style.display = 'none';
   $('dry').style.display = 'none';
-  if (ES) { ES.close(); ES = null; }
+  closeSSE();
   stopFallback();
 }
 // ---------- 草稿持久化：刷新后保留提示词 / 参考图 / 参数（按用户隔离） ----------
@@ -541,32 +543,69 @@ function closeBlockModal() { $('modal').style.display = 'none'; $('prompt').focu
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeBlockModal(); });
 
 // ---------- SSE 实时连接 ----------
-function connectSSE() {
-  if (ES) ES.close();
-  setWS(false, '未连接');
-  if (!authenticated()) return;
-  try {
-    ES = new EventSource('/v1/events');
-  } catch (e) { setWS(false, '不支持 SSE'); return; }
-  ES.onopen = () => { setWS(true, '实时已连接'); stopFallback(); };
-  ES.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.type === 'snapshot') {
-      jobs = new Map((m.jobs || []).map(j => [j.id, j]));
-      renderHistory();
-      if (!activeId || !jobs.has(activeId)) {
-        const act = (m.jobs || []).find(j => j.status === 'running' || j.status === 'queued') || (m.jobs || [])[0];
-        if (act) selectJob(act.id);
-        else renderStage();
-      }
-    } else if (m.type === 'job_update') {
-      jobs.set(m.job.id, m.job);
-      renderHistory();
-      if (m.job.id === activeId) renderStage();
-    }
-  };
-  ES.onerror = () => { setWS(false, '实时连接中断，轮询兜底中…'); startFallback(); };
+function closeSSE() {
+  if (sseErrorTimer) { clearTimeout(sseErrorTimer); sseErrorTimer = null; }
+  if (ES) {
+    ES.onopen = null;
+    ES.onmessage = null;
+    ES.onerror = null;
+    ES.close();
+    ES = null;
+  }
 }
+function connectSSE() {
+  closeSSE();
+  setWS(false, '正在建立实时连接…');
+  if (!authenticated()) return;
+  isPageUnloading = false;
+  try {
+    const source = new EventSource('/v1/events');
+    ES = source;
+    let opened = false;
+    const showDelayedError = () => {
+      if (isPageUnloading || ES !== source) return;
+      sseErrorTimer = null;
+      setWS(false, opened ? '实时连接正在恢复，轮询兜底中…' : '实时连接建立失败，轮询兜底中…');
+    };
+    source.onopen = () => {
+      if (ES !== source) return;
+      opened = true;
+      if (sseErrorTimer) { clearTimeout(sseErrorTimer); sseErrorTimer = null; }
+      setWS(true, '实时已连接');
+      stopFallback();
+    };
+    source.onmessage = (e) => {
+      if (ES !== source) return;
+      const m = JSON.parse(e.data);
+      if (m.type === 'snapshot') {
+        jobs = new Map((m.jobs || []).map(j => [j.id, j]));
+        renderHistory();
+        if (!activeId || !jobs.has(activeId)) {
+          const act = (m.jobs || []).find(j => j.status === 'running' || j.status === 'queued') || (m.jobs || [])[0];
+          if (act) selectJob(act.id);
+          else renderStage();
+        }
+      } else if (m.type === 'job_update') {
+        jobs.set(m.job.id, m.job);
+        renderHistory();
+        if (m.job.id === activeId) renderStage();
+      }
+    };
+    source.onerror = () => {
+      if (isPageUnloading || ES !== source) return;
+      // Native EventSource reconnects itself.  Do not present a transient
+      // retry (including one caused by a browser refresh) as a hard outage.
+      startFallback();
+      if (!sseErrorTimer) sseErrorTimer = setTimeout(showDelayedError, 3500);
+    };
+  } catch (e) { setWS(false, '不支持 SSE'); return; }
+}
+// Close before the document is discarded so the next page does not compete
+// with a stale EventSource subscription on the server.
+window.addEventListener('pagehide', () => { isPageUnloading = true; closeSSE(); });
+window.addEventListener('pageshow', e => {
+  if (e.persisted && authenticated()) connectSSE();
+});
 function setWS(ok, text) {
   const d = $('wsdot');
   d.className = 'dot ' + (ok ? 'on' : 'off');
