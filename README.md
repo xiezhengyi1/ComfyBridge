@@ -44,7 +44,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 | POST | `/v1/auth/login` | 用 Key 创建短期 HttpOnly 浏览器会话 |
 | GET | `/v1/auth/session` | 获取当前会话身份（不返回任何凭据） |
 | POST | `/v1/auth/logout` | 撤销当前浏览器会话 |
-| POST | `/v1/admin/keys` | 管理员：批量生成一次性激活 Key `{count, note}` |
+| POST | `/v1/admin/keys` | 管理员：批量生成一次性激活 Key `{count, note, validity?}`（`validity`: `once`=仅一次请求有效 / `1h` / `1d` / `1m`） |
 | GET | `/v1/admin/keys` | 管理员：已发放激活 Key 列表（状态/绑定用户/备注） |
 | POST | `/v1/admin/keys/revoke` | 管理员：按非敏感 `key_id` 吊销 Key |
 | GET | `/v1/admin/users` | 管理员：用户记录列表 |
@@ -58,10 +58,13 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
   `api_keys` 是旧明文，会自动归档进 `admin-key.txt` 并转存摘要；`api_keys` 为空时自动生成
   新的管理员 Key 写入两者。也可用环境变量 `COMFYBRIDGE_API_KEY` 注入明文（同样自动归档）。
   管理员在网页端"🔑 管理"生成/管理用户 Key。
-- **一次性激活 Key**：`POST /v1/admin/keys`（或 `python genkeys.py <数量> [备注]`）
-  生成。每个 Key 只能使用一次，并有有效期。浏览器首次登录时把它交换为短期、
+- **一次性激活 Key**：`POST /v1/admin/keys`（或 `python genkeys.py <数量> [备注] [有效期]`）
+  生成。每个 Key 只能使用一次，并有有效期；生成时可选有效期预设：
+  `once`=仅第一次请求有效（激活即失效，适合一次性脚本调用）、`1h`/`1d`/`1m`=激活后有效
+  1 小时/1 天/1 个月（未使用时也按同一时长过期），不选则按配置默认
+  （`activation_key_ttl_hours` + `user_key_ttl_days`）。浏览器首次登录时把它交换为短期、
   `HttpOnly + Secure + SameSite=Strict` 会话；前端不会保存原始 Key。脚本 Key 激活后
-  也会按配置自动到期。
+  也会按选定的有效期自动到期。
 - **用户数据隔离**：任务列表/详情、生成的文件下载、SSE 实时事件流全部按用户隔离，
   用户只能看到自己名下（自己用 Key 创建的）任务与文件。历史遗留的无主任务自动划归管理员。
 - **吊销、轮换与审计**：历史 Key 从不回显，存储中只保留 HMAC 摘要。管理员可按记录 ID

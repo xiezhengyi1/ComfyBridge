@@ -10,6 +10,7 @@
   管理员可 POST /v1/admin/keys 批量生成一次性激活 Key 分发给用户。
 - 激活 Key：每个 Key 只能用一次 —— 第一次携带它请求任意 /v1 接口时在线校验并激活，
   绑定为当前用户的个人身份 Key；此后该 Key 继续可用，但不能被第二个人激活。
+  生成时可选择有效期：once=仅一次请求有效、1h/1d/1m=激活后有效 1 小时/1 天/1 个月。
 - 用户数据隔离：每个用户只能看到自己的任务、文件与 SSE 实时流。
 - 脚本鉴权：Authorization: Bearer <key> 或 X-API-Key: <key>。
 - 浏览器鉴权：登录时将 Key 交换为短期 HttpOnly/Secure/SameSite Cookie，
@@ -25,6 +26,7 @@ import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -586,13 +588,17 @@ class GenerateKeysRequest(BaseModel):
     note: str = Field(default="", description="备注（如客户名/用途），可选")
     expires_in_hours: int | None = Field(default=None, ge=1, le=2160,
                                           description="激活码有效期（小时），默认使用配置")
+    validity: Literal["once", "1h", "1d", "1m"] | None = Field(
+        default=None,
+        description="有效期预设：once=仅一次请求有效；1h/1d/1m=激活后有效 1 小时/1 天/1 个月；默认按配置")
 
 
 @app.post("/v1/admin/keys")
 def admin_generate_keys(req: GenerateKeysRequest, user=Depends(require_admin)):
     """批量生成一次性激活 Key；原始 Key 只在本次响应中返回一次。"""
     return {"keys": registry.generate_keys(
-        req.count, req.note.strip(), req.expires_in_hours, actor=user["user_id"])}
+        req.count, req.note.strip(), req.expires_in_hours, req.validity,
+        actor=user["user_id"])}
 
 
 @app.get("/v1/admin/keys")

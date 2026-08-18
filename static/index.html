@@ -370,6 +370,13 @@ footer{color:#9ca3af;font-size:12px;text-align:center;padding:20px}
       每个用户的任务/文件/实时事件相互隔离。</p>
     <div class="ctl-row" style="margin-top:0">
       <div class="field"><span>生成数量</span><input id="gencount" type="text" value="1" style="width:70px"></div>
+      <div class="field"><span>有效期</span><select id="genvalidity">
+        <option value="">默认（按配置）</option>
+        <option value="once">1 次（仅一次请求）</option>
+        <option value="1h">1 小时</option>
+        <option value="1d">1 天</option>
+        <option value="1m">1 个月</option>
+      </select></div>
       <div class="field" style="flex:1"><span>备注（可选）</span><input id="gennote" type="text" placeholder="如：客户A 试用"></div>
       <button class="btn" onclick="genKeys()">生成</button>
     </div>
@@ -1018,9 +1025,12 @@ $('adminbtn').onclick = openAdmin;
 async function genKeys() {
   const count = Math.max(1, Math.min(100, Number($('gencount').value) || 1));
   const note = $('gennote').value.trim();
+  const validity = $('genvalidity').value || null;
+  const body = { count, note };
+  if (validity) body.validity = validity;   // 空串会触发后端 422，仅发送选中项
   $('genresult').innerHTML = '<div class="infobox">生成中…</div>';
   try {
-    const r = await api('/v1/admin/keys', { method: 'POST', body: JSON.stringify({ count, note }) });
+    const r = await api('/v1/admin/keys', { method: 'POST', body: JSON.stringify(body) });
     const list = (r.keys || []).map(x =>
       `<div style="display:flex;align-items:center;gap:8px;font-family:Consolas,monospace;font-size:12px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:4px 0">
         <span style="flex:1;word-break:break-all">${escapeHtml(x.key)}</span>
@@ -1052,13 +1062,15 @@ async function renderAdminKeys() {
     const ks = r.keys || [];
     if (!ks.length) { $('adminbody').innerHTML = '<div class="empty" style="padding:24px">暂无发放记录</div>'; return; }
     const ST = { unused: ['未使用', 'var(--warn)'], used: ['已激活', 'var(--ok)'], revoked: ['已吊销', 'var(--err)'], expired: ['已过期', 'var(--err)'] };
+    const VT = { once: '1 次', '1h': '1 小时', '1d': '1 天', '1m': '1 个月' };
     $('adminbody').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">记录 ID</th><th style="padding:4px">状态</th><th style="padding:4px">绑定用户</th><th style="padding:4px">备注</th><th style="padding:4px">到期时间</th><th style="padding:4px"></th></tr>' +
+      '<tr style="text-align:left;color:var(--muted)"><th style="padding:4px">记录 ID</th><th style="padding:4px">状态</th><th style="padding:4px">绑定用户</th><th style="padding:4px">备注</th><th style="padding:4px">有效期</th><th style="padding:4px">到期时间</th><th style="padding:4px"></th></tr>' +
       ks.map(k => {
         const st = ST[k.status] || [k.status, 'var(--muted)'];
+        const vt = k.single_use ? VT.once : (VT[k.validity] || '默认');
         const t = k.expires_at ? new Date(k.expires_at * 1000).toLocaleString('zh-CN', { hour12: false }) : '—';
         const rev = (k.status === 'unused' || k.status === 'used') ? `<button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="revokeKey('${k.id}')">吊销</button>` : '';
-        return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;word-break:break-all;padding:6px 4px">${escapeHtml(k.id)}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px">${escapeHtml(k.bound_user || '—')}</td><td style="padding:6px 4px">${escapeHtml(k.note || '')}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${rev}</td></tr>`;
+        return `<tr style="border-top:1px solid var(--border)"><td style="font-family:Consolas,monospace;word-break:break-all;padding:6px 4px">${escapeHtml(k.id)}</td><td style="color:${st[1]};font-weight:600;padding:6px 4px">${st[0]}</td><td style="padding:6px 4px">${escapeHtml(k.bound_user || '—')}</td><td style="padding:6px 4px">${escapeHtml(k.note || '')}</td><td style="padding:6px 4px;white-space:nowrap">${vt}</td><td style="padding:6px 4px;white-space:nowrap">${t}</td><td style="padding:6px 4px">${rev}</td></tr>`;
       }).join('') + '</table>';
   } catch (e) { $('adminbody').innerHTML = '<div class="errbox">' + escapeHtml(e.message) + '</div>'; }
 }

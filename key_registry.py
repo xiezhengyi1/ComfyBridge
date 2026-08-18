@@ -31,6 +31,15 @@ USER_ROLE_USER = "user"
 USER_STATUS_ACTIVE = "active"
 USER_STATUS_DISABLED = "disabled"
 
+# 生成激活 Key 时可选择的有效期预设：once=仅第一次请求有效（激活即失效）；
+# 1h / 1d / 1m = 激活后有效 1 小时 / 1 天 / 1 个月（未使用时也按同一时长过期）。
+VALIDITY_OPTIONS: dict[str, int | None] = {
+    "once": None,
+    "1h": 1,
+    "1d": 24,
+    "1m": 30 * 24,
+}
+
 
 def _new_id(prefix: str, bytes_: int = 8) -> str:
     return f"{prefix}_{secrets.token_urlsafe(bytes_)}"
@@ -163,6 +172,9 @@ class KeyRegistry:
             rec.setdefault("created_at", now)
             rec.setdefault("used_at", None)
             rec.setdefault("revoked_at", None)
+            rec.setdefault("single_use", False)
+            rec.setdefault("validity", None)
+            rec.setdefault("user_key_ttl_hours", None)
             # Existing deployments acquire an explicit expiry from the upgrade time.
             if rec.get("expires_at") is None:
                 hours = self._activation_ttl_hours() if rec["status"] == KEY_STATUS_UNUSED else self._user_key_ttl_hours()
@@ -296,6 +308,8 @@ class KeyRegistry:
             "used_at": rec.get("used_at"),
             "expires_at": rec.get("expires_at"),
             "revoked_at": rec.get("revoked_at"),
+            "single_use": bool(rec.get("single_use")),
+            "validity": rec.get("validity"),
         }
 
     @staticmethod
@@ -312,10 +326,29 @@ class KeyRegistry:
 
     # ---------------- Key lifecycle ----------------
     def generate_keys(self, count: int, note: str = "", expires_in_hours: int | None = None,
-                      actor: str | None = None) -> list[dict]:
-        """Issue activation keys. Each raw key is included only in this return value."""
+                      validity: str | None = None, actor: str | None = None) -> list[dict]:
+        """Issue activation keys. Each raw key is included only in this return value.
+
+        ``validity``（可选）限定 Key 生命周期：``once`` 表示仅第一次请求有效
+        （激活即失效，适合一次性脚本调用）；``1h`` / ``1d`` / ``1m`` 表示激活后
+        有效 1 小时 / 1 天 / 1 个月（未使用时也按同一时长过期）。未指定时沿用
+        ``expires_in_hours`` 或配置默认值。
+        """
         count = max(1, min(int(count), 100))
-        ttl = self._activation_ttl_hours() if expires_in_hours is None else max(1, min(int(expires_in_hours), 24 * 90))
+        validity = ((validity or "").strip().lower()) or None
+        if validity is not None and validity not in VALIDITY_OPTIONS:
+            raise ValueError(f"validity 只能是 once / 1h / 1d / 1m，收到: {validity}")
+        single_use = validity == "once"
+        if validity == "once":
+            ttl = self._activation_ttl_hours()   # 未使用的激活窗口沿用配置
+            user_key_ttl_hours = None            # 激活后立即失效，不走时长
+        elif validity is not None:
+            ttl = int(VALIDITY_OPTIONS[validity])
+            user_key_ttl_hours = ttl             # 激活后同样按该时长到期
+        else:
+            ttl = self._activation_ttl_hours() if expires_in_hours is None \
+                else max(1, min(int(expires_in_hours), 24 * 90))
+            user_key_ttl_hours = None
         now = time.time()
         out = []
         with self._lock:
@@ -335,11 +368,17 @@ class KeyRegistry:
                     "used_at": None,
                     "expires_at": now + ttl * 3600,
                     "revoked_at": None,
+                    "single_use": single_use,
+                    "validity": validity,
+                    "user_key_ttl_hours": user_key_ttl_hours,
                 }
                 self._keys[digest] = rec
                 out.append({**self._public_key(rec), "key": raw})
             self._save_locked()
-            self._audit_locked("activation_keys_issued", actor=actor, detail={"count": count, "ttl_hours": ttl})
+            self._audit_locked("activation_keys_issued", actor=actor,
+                               detail={"count": count, "ttl_hours": ttl,
+                                       "validity": validity or "default",
+                                       "single_use": single_use})
         return out
 
     def resolve_user(self, key: str) -> dict | None:
@@ -364,6 +403,12 @@ class KeyRegistry:
                 return None
             now = time.time()
             if rec.get("status") == KEY_STATUS_UNUSED:
+                if rec.get("single_use"):
+                    key_expires_at = now          # 一次性 Key：激活即失效，仅本次请求有效
+                elif rec.get("user_key_ttl_hours") is not None:
+                    key_expires_at = now + int(rec["user_key_ttl_hours"]) * 3600
+                else:
+                    key_expires_at = now + self._user_key_ttl_hours() * 3600
                 user = {
                     "user_id": _new_id("u"),
                     "key_id": rec["id"],
@@ -371,7 +416,7 @@ class KeyRegistry:
                     "status": USER_STATUS_ACTIVE,
                     "activated_at": now,
                     "last_seen_at": now,
-                    "key_expires_at": now + self._user_key_ttl_hours() * 3600,
+                    "key_expires_at": key_expires_at,
                     "credential_version": 1,
                 }
                 rec["status"] = KEY_STATUS_USED
